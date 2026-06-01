@@ -588,11 +588,11 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--black);color:va
         </div>
         <div class="field">
           <label>Start Time</label>
-          <input type="time" id="f-start"/>
+          <input type="text" id="f-start" placeholder="e.g. 8:00 PM"/>
         </div>
         <div class="field">
           <label>End Time</label>
-          <input type="time" id="f-end"/>
+          <input type="text" id="f-end" placeholder="e.g. 2:00 AM"/>
         </div>
         <div class="field">
           <label>Overtime Hrs</label>
@@ -872,7 +872,7 @@ function buildSummary(){
   document.getElementById('s-badge').textContent=state.badge||'—';
   const d=state.date?new Date(state.date+'T00:00:00'):null;
   document.getElementById('s-date').textContent=d?(d.getMonth()+1)+'/'+(d.getDate())+'/'+d.getFullYear():'—';
-  const st=fmtTime(state.start),et=fmtTime(state.end);
+  const st=state.start||'',et=state.end||'';
   document.getElementById('s-shift').textContent=(st&&et)?st+' – '+et:(st||'—');
   document.getElementById('s-ot').textContent=state.overtime?state.overtime+'h':'—';
   document.getElementById('s-miles').textContent=state.mileage?state.mileage+' mi':'—';
@@ -910,7 +910,7 @@ async function handleDownload(){
     const dateStr=d?(d.getMonth()+1)+'/'+(d.getDate())+'/'+d.getFullYear():'';
     const payload={
       name:state.name, badge:state.badge||'', ot_hours:state.overtime||'', mileage:state.mileage||'',
-      date:dateStr, start_time:fmtT(state.start), end_time:fmtT(state.end),
+      date:dateStr, start_time:state.start||'', end_time:state.end||'',
       details:state.details,
       total_contacts:state.total_contacts,dui_alcohol:state.dui_alcohol,
       dui_drugs:state.dui_drugs,dui_drugs_alcohol:state.dui_drugs_alcohol,
