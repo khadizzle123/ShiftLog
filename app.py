@@ -1,4 +1,4 @@
-from flask import Flask, request, send_file, jsonify, render_template
+from flask import Flask, request, send_file, jsonify
 from pypdf import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
 import io, os, textwrap
@@ -100,10 +100,9 @@ def build_overlay(data):
     packet.seek(0)
     return packet
 
-#  CORRECT
-@app.route('/')  
-def home():
-    return render_template('index.html')
+@app.route('/')
+def index():
+    return app.send_static_file('shiftlog.html')
 
 @app.route('/generate_pdf', methods=['POST'])
 def generate_pdf():
@@ -134,6 +133,5 @@ def generate_pdf():
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 
 if __name__ == '__main__':
-    import os 
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    port = int(os.environ.get('PORT', 7860))
+    app.run(host='0.0.0.0', port=port, debug=False)
