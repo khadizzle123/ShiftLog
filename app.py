@@ -17,10 +17,10 @@ TEMPLATE_PDF = _find_template()
 # Calibrated for the electronic HVE form (US Letter 612x792 pts)
 NX = 293   # center of Number column
 FIELDS = {
-    'name':               {'x': 62,  'y': 658, 'align': 'left',   'size': 8},
-    'badge':              {'x': 150, 'y': 658, 'align': 'left',   'size': 8},
-    'ot_hours':           {'x': 550, 'y': 676, 'align': 'right',  'size': 7},
-    'mileage':            {'x': 550, 'y': 664, 'align': 'right',  'size': 7},
+    'name':               {'x': 62,  'y': 652, 'align': 'left',   'size': 8},
+    'badge':              {'x': 150, 'y': 652, 'align': 'left',   'size': 8},
+    'ot_hours':           {'x': 510, 'y': 676, 'align': 'right',  'size': 7},
+    'mileage':            {'x': 510, 'y': 664, 'align': 'right',  'size': 7},
     'date':               {'x': 318, 'y': 650, 'align': 'left',   'size': 6.5},
     'start_time':         {'x': 420, 'y': 650, 'align': 'left',   'size': 6.5},
     'end_time':           {'x': 510, 'y': 650, 'align': 'left',   'size': 6.5},
