@@ -108,6 +108,7 @@ def index():
 @app.route('/generate_pdf', methods=['POST'])
 def generate_pdf():
     data = request.json or {}
+    print('RECEIVED:', data)
     try:
         overlay_packet = build_overlay(data)
 
