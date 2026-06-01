@@ -102,7 +102,7 @@ def build_overlay(data):
 
 @app.route('/')
 def index():
-   with open(os.path.join(BASE_DIR, 'index.html')) as f:
+  with open(os.path.join(BASE_DIR, 'templates', 'index.html')) as f:
         return f.read()
 
 @app.route('/generate_pdf', methods=['POST'])
