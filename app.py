@@ -100,7 +100,7 @@ def build_overlay(data):
     packet.seek(0)
     return packet
 
-@app.route('/')
+@app.route('index.html')
 def index():
     return app.send_static_file('shiftlog.html')
 
@@ -133,4 +133,6 @@ def generate_pdf():
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=7860, debug=False)
+    import os 
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
