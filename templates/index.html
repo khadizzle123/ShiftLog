@@ -486,102 +486,121 @@ App.downloadPDF = async function(){
 
 App.page_supervisor = function(v){
   if(!this.user||!['admin','supervisor'].includes(this.user.role)){ this.go('form'); return; }
-  this.supFiles = [];
   this.showAllCols = false;
+  if(!this.range) this.range = {preset:'all', start:null, end:null};
   v.innerHTML = `
     <div class="container">
       <h1 class="h1">Supervisor Portal</h1>
-      <p class="sub">Upload reports and track officer performance.</p>
+      <p class="sub">Track officer performance and download reports.</p>
 
       <div class="card" style="margin-bottom:16px">
-        <div style="font-size:12px;font-weight:700;color:var(--a);margin-bottom:14px;text-transform:uppercase;letter-spacing:.8px">📂 Upload Officer PDFs</div>
-        <div class="row" style="margin-bottom:12px">
-          <div class="field"><label class="label">Officer Last Name</label><input class="input" id="up-name" placeholder="e.g. Hansen"/></div>
-          <div class="field"><label class="label">Badge Number</label><input class="input" id="up-badge" placeholder="e.g. 4521"/></div>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap">
+          <span style="font-size:12px;font-weight:700;color:var(--a);text-transform:uppercase;letter-spacing:.8px">📅 Time Period</span>
+          <div style="flex:1"></div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap" id="range-presets">
+            <button class="nav-btn" data-preset="week" onclick="App.setRange('week')">This Week</button>
+            <button class="nav-btn" data-preset="month" onclick="App.setRange('month')">This Month</button>
+            <button class="nav-btn" data-preset="all" onclick="App.setRange('all')">All Time</button>
+            <button class="nav-btn" data-preset="custom" onclick="App.setRange('custom')">Custom</button>
+          </div>
         </div>
-        <div class="dropzone" id="dz" onclick="document.getElementById('fileinput').click()">
-          <div style="font-size:28px;margin-bottom:6px">📄</div>
-          <div style="font-size:13px;font-weight:600">Drop PDFs here or click to add</div>
-          <div style="font-size:10px;color:var(--m);margin-top:3px">Accepts multiple filled HVE reports</div>
+        <div id="custom-range" class="hidden" style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+          <div class="field" style="margin-bottom:0"><label class="label">From</label><input class="input" type="date" id="range-start" onchange="App.applyCustom()"/></div>
+          <div class="field" style="margin-bottom:0"><label class="label">To</label><input class="input" type="date" id="range-end" onchange="App.applyCustom()"/></div>
         </div>
-        <input type="file" id="fileinput" multiple accept="application/pdf" class="hidden"/>
-        <div id="filelist" style="margin-top:10px"></div>
+        <div id="summary-line" style="font-size:13px;color:var(--w2);line-height:1.6">Loading summary…</div>
       </div>
-
-      <div id="reportcards"></div>
 
       <div class="card">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
           <span style="font-size:12px;font-weight:700;color:var(--a);text-transform:uppercase;letter-spacing:.8px">📊 Performance</span>
           <div style="flex:1"></div>
-          <select class="input" id="perf-officer" style="width:auto;font-size:11px;padding:7px 10px" onchange="App.loadPerformance()">
+          <select class="input" id="perf-officer" style="width:auto;font-size:11px;padding:7px 10px" onchange="App.onOfficerChange()">
             <option value="all">All Officers</option>
           </select>
         </div>
+
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px">
+          <button class="btn outline small" style="flex:1 1 200px" onclick="App.downloadReport('history')">
+            📋 History Report — <span id="dl-who-h">All Officers</span>
+          </button>
+          <button class="btn accent small" style="flex:1 1 200px" onclick="App.downloadReport('stats')">
+            📊 Stats Summary — <span id="dl-who-s">All Officers</span>
+          </button>
+        </div>
+
         <div id="perf-content"><div class="muted" style="font-size:12px">Loading…</div></div>
       </div>
     </div>`;
 
-  // wire up file input + drag/drop
-  const dz=document.getElementById('dz'), fi=document.getElementById('fileinput');
-  fi.onchange=()=>{ App.supFiles.push(...Array.from(fi.files)); App.renderFiles(); };
-  dz.ondragover=e=>{e.preventDefault();dz.classList.add('over')};
-  dz.ondragleave=()=>dz.classList.remove('over');
-  dz.ondrop=e=>{e.preventDefault();dz.classList.remove('over');App.supFiles.push(...Array.from(e.dataTransfer.files));App.renderFiles();};
-
+  this.applyPresetButtonState();
   this.loadOfficers();
+  this.loadSummary();
   this.loadPerformance();
 };
 
-App.renderFiles = function(){
-  const fl=document.getElementById('filelist'); if(!fl) return;
-  if(!App.supFiles.length){ fl.innerHTML=''; return; }
-  fl.innerHTML = App.supFiles.map((f,i)=>`
-    <div class="filechip"><span>📄</span><span class="fn">${f.name}</span><span class="fx" onclick="App.supFiles.splice(${i},1);App.renderFiles()">✕</span></div>
-  `).join('') + `<button class="btn accent small full" id="proc-btn" style="margin-top:10px" onclick="App.processFiles()">Process ${App.supFiles.length} file${App.supFiles.length>1?'s':''}</button>`;
+// ---- date range handling ----
+App._fmt = function(d){ return d.toISOString().slice(0,10); };
+App.presetDates = function(preset){
+  const today = new Date();
+  if(preset==='week'){ const s=new Date(today); s.setDate(s.getDate()-6); return {start:App._fmt(s), end:App._fmt(today)}; }
+  if(preset==='month'){ const s=new Date(today.getFullYear(), today.getMonth(), 1); return {start:App._fmt(s), end:App._fmt(today)}; }
+  return {start:null, end:null};
+};
+App.applyPresetButtonState = function(){
+  document.querySelectorAll('#range-presets .nav-btn').forEach(b=>{
+    b.classList.toggle('active', b.dataset.preset===App.range.preset);
+  });
+  document.getElementById('custom-range').classList.toggle('hidden', App.range.preset!=='custom');
+};
+App.setRange = function(preset){
+  App.range.preset = preset;
+  if(preset!=='custom'){ const r=App.presetDates(preset); App.range.start=r.start; App.range.end=r.end; }
+  App.applyPresetButtonState();
+  if(preset!=='custom'){ App.loadSummary(); App.loadPerformance(); }
+};
+App.applyCustom = function(){
+  App.range.start = document.getElementById('range-start').value || null;
+  App.range.end = document.getElementById('range-end').value || null;
+  App.loadSummary(); App.loadPerformance();
+};
+App.rangeQS = function(){
+  const p=[]; if(App.range.start) p.push('start='+App.range.start); if(App.range.end) p.push('end='+App.range.end);
+  return p.length?('&'+p.join('&')):'';
+};
+App.rangeLabel = function(){
+  if(App.range.preset==='week') return 'this week';
+  if(App.range.preset==='month') return 'this month';
+  if(App.range.preset==='custom' && (App.range.start||App.range.end)) return `${App.range.start||'…'} → ${App.range.end||'…'}`;
+  return 'all time';
 };
 
-App.processFiles = async function(){
-  const name=document.getElementById('up-name').value.trim();
-  const badge=document.getElementById('up-badge').value.trim();
-  const btn=document.getElementById('proc-btn');
-  if(!name){ alert('Enter the officer name first.'); return; }
-  btn.disabled=true; btn.innerHTML='Extracting<span class="dots"><span></span><span></span><span></span></span>';
-  const fd=new FormData();
-  fd.append('officer_name',name); fd.append('badge',badge);
-  App.supFiles.forEach(f=>fd.append('files',f));
-  await fetch('/api/import_pdf',{method:'POST',body:fd});
-  btn.textContent='✓ Done — reports ready below';
-  App.supFiles=[];
-  App.showReportCards();
-  App.loadOfficers(); App.loadPerformance();
-};
-
-App.showReportCards = function(){
-  const officer = document.getElementById('perf-officer')?.value || 'all';
-  document.getElementById('reportcards').innerHTML = `
-    <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">
-      <div class="card" style="flex:1 1 240px;cursor:pointer" onclick="App.downloadReport('history')">
-        <div style="font-size:26px;margin-bottom:8px">📋</div>
-        <div style="font-size:15px;font-weight:700;margin-bottom:4px">History Report</div>
-        <div style="font-size:11px;color:var(--m);margin-bottom:14px;line-height:1.4">Every submission by date & category</div>
-        <div style="padding-top:10px;border-top:1px solid var(--bd);font-size:12px;color:var(--a);font-weight:600">⬇ Download PDF</div>
-      </div>
-      <div class="card glow" style="flex:1 1 240px;cursor:pointer" onclick="App.downloadReport('stats')">
-        <div style="font-size:26px;margin-bottom:8px">📊</div>
-        <div style="font-size:15px;font-weight:700;margin-bottom:4px">Stats Summary</div>
-        <div style="font-size:11px;color:var(--m);margin-bottom:14px;line-height:1.4">Combined totals, bar graph & officer breakdown</div>
-        <div style="padding-top:10px;border-top:1px solid var(--bd);font-size:12px;color:var(--a);font-weight:600">⬇ Download PDF</div>
-      </div>
-    </div>`;
+App.loadSummary = async function(){
+  const {data} = await App.api(`/api/performance?officer=all${App.rangeQS()}`);
+  const el = document.getElementById('summary-line'); if(!el) return;
+  const t = data.totals||{};
+  const citations = ['seat_belt','speeding','texting','suspended_licenses','child_safety_seat','reckless_driving','inattentive_driving','uninsured_motorists'].reduce((a,k)=>a+(t[k]||0),0);
+  el.innerHTML = `<strong style="color:var(--w)">${data.officer_count||0}</strong> officers active &nbsp;•&nbsp; `+
+    `<strong style="color:var(--w)">${data.count||0}</strong> forms &nbsp;•&nbsp; `+
+    `<strong style="color:var(--a)">${t.total_contacts||0}</strong> contacts &nbsp;•&nbsp; `+
+    `<strong style="color:var(--w)">${citations}</strong> citations &nbsp; `+
+    `<span style="color:var(--m);font-size:11px">(${App.rangeLabel()})</span>`;
 };
 
 App.downloadReport = async function(kind){
   const officer=document.getElementById('perf-officer')?.value||'all';
-  const r=await fetch(`/api/report/${kind}?officer=${encodeURIComponent(officer)}`);
+  const r=await fetch(`/api/report/${kind}?officer=${encodeURIComponent(officer)}${App.rangeQS()}`);
   const blob=await r.blob(); const url=URL.createObjectURL(blob);
   const a=document.createElement('a'); a.href=url; a.download=`HVE_${kind}_${officer}.pdf`;
   document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+};
+
+App.onOfficerChange = function(){
+  const officer = document.getElementById('perf-officer').value;
+  const label = officer === 'all' ? 'All Officers' : officer;
+  const h = document.getElementById('dl-who-h'); if(h) h.textContent = label;
+  const s = document.getElementById('dl-who-s'); if(s) s.textContent = label;
+  App.loadPerformance();
 };
 
 App.loadOfficers = async function(){
@@ -594,7 +613,7 @@ App.loadOfficers = async function(){
 
 App.loadPerformance = async function(){
   const officer=document.getElementById('perf-officer')?.value||'all';
-  const {data}=await App.api(`/api/performance?officer=${encodeURIComponent(officer)}`);
+  const {data}=await App.api(`/api/performance?officer=${encodeURIComponent(officer)}${App.rangeQS()}`);
   const el=document.getElementById('perf-content'); if(!el) return;
   const t=data.totals||{};
   const citations=['seat_belt','speeding','texting','suspended_licenses','child_safety_seat','reckless_driving','inattentive_driving','uninsured_motorists'].reduce((a,k)=>a+(t[k]||0),0);

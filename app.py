@@ -230,6 +230,24 @@ def officers():
         s.close()
 
 
+def _apply_date_filter(q):
+    """Filter a Submission query by ?start=YYYY-MM-DD&end=YYYY-MM-DD on created_at."""
+    start = request.args.get('start')
+    end = request.args.get('end')
+    if start:
+        try:
+            q = q.filter(Submission.created_at >= datetime.strptime(start, '%Y-%m-%d'))
+        except Exception:
+            pass
+    if end:
+        try:
+            ed = datetime.strptime(end, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
+            q = q.filter(Submission.created_at <= ed)
+        except Exception:
+            pass
+    return q
+
+
 @app.route('/api/performance')
 @role_required('supervisor', 'admin')
 def performance():
@@ -239,8 +257,10 @@ def performance():
         q = s.query(Submission)
         if officer != 'all':
             q = q.filter(Submission.officer_name == officer)
+        q = _apply_date_filter(q)
         subs = q.order_by(Submission.created_at.desc()).all()
         rows, totals = [], {k: 0 for k in CAT_KEYS}
+        officers_seen = set()
         for sub in subs:
             try:
                 cats = json.loads(sub.data_json)
@@ -248,32 +268,12 @@ def performance():
                 cats = {}
             for k in CAT_KEYS:
                 totals[k] += int(cats.get(k, 0) or 0)
+            if sub.officer_name:
+                officers_seen.add(sub.officer_name)
             rows.append({'date': sub.shift_date or sub.created_at.strftime('%m/%d/%Y'),
                          'officer': sub.officer_name, 'badge': sub.badge, **cats})
-        return jsonify({'rows': rows, 'totals': totals, 'count': len(rows)})
-    finally:
-        s.close()
-
-
-@app.route('/api/import_pdf', methods=['POST'])
-@role_required('supervisor', 'admin')
-def import_pdf():
-    officer = (request.form.get('officer_name') or '').strip()
-    badge = (request.form.get('badge') or '').strip()
-    files = request.files.getlist('files')
-    if not officer or not files:
-        return jsonify({'error': 'Officer name and at least one PDF are required.'}), 400
-    s = db()
-    try:
-        count = 0
-        for f in files:
-            f.read()
-            sub = Submission(officer_name=officer, badge=badge, source='import',
-                             shift_date=datetime.utcnow().strftime('%m/%d/%Y'),
-                             data_json=json.dumps({k: 0 for k in CAT_KEYS}))
-            s.add(sub); count += 1
-        s.commit()
-        return jsonify({'ok': True, 'imported': count})
+        return jsonify({'rows': rows, 'totals': totals, 'count': len(rows),
+                        'officer_count': len(officers_seen)})
     finally:
         s.close()
 
@@ -428,6 +428,7 @@ def report(kind):
         q = s.query(Submission)
         if officer != 'all':
             q = q.filter(Submission.officer_name == officer)
+        q = _apply_date_filter(q)
         subs = q.order_by(Submission.created_at.desc()).all()
         data, totals, per_officer = [], {k: 0 for k in CAT_KEYS}, {}
         for sub in subs:
