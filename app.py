@@ -79,7 +79,29 @@ class Submission(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class Setting(Base):
+    __tablename__ = 'settings'
+    key = Column(String(80), primary_key=True)
+    value = Column(Text, default='')
+
+
 Base.metadata.create_all(engine)
+
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+def get_setting(s, key, default=''):
+    row = s.query(Setting).get(key)
+    return row.value if row else default
+
+
+def set_setting(s, key, value):
+    row = s.query(Setting).get(key)
+    if row:
+        row.value = value
+    else:
+        s.add(Setting(key=key, value=value))
+    s.commit()
 
 app = Flask(__name__, static_folder=BASE_DIR, static_url_path='')
 app.secret_key = os.environ.get('SECRET_KEY', 'shiftlog-' + os.urandom(8).hex())
@@ -127,13 +149,18 @@ def user_dict(u):
 @app.route('/api/signup', methods=['POST'])
 def signup():
     d = request.json or {}
-    name = (d.get('name') or '').strip()
-    badge = (d.get('badge') or '').strip()
-    pw = d.get('password') or ''
-    if not name or not badge or not pw:
-        return jsonify({'error': 'Name, badge, and password are required.'}), 400
     s = db()
     try:
+        # check if signup is allowed
+        if get_setting(s, 'allow_signup', 'true').lower() != 'true':
+            return jsonify({'error': 'New account registration is currently disabled. Contact your administrator.'}), 403
+        name = (d.get('name') or '').strip()
+        badge = (d.get('badge') or '').strip()
+        pw = d.get('password') or ''
+        if not name or not badge or not pw:
+            return jsonify({'error': 'Name, badge, and password are required.'}), 400
+        if get_setting(s, 'require_email', 'false').lower() == 'true' and not (d.get('email') or '').strip():
+            return jsonify({'error': 'An email address is required to register.'}), 400
         if s.query(User).filter_by(badge=badge).first():
             return jsonify({'error': 'That badge number is already registered.'}), 409
         is_first = s.query(User).count() == 0
@@ -312,6 +339,305 @@ def admin_delete_user():
         u = s.query(User).get(d.get('user_id'))
         if u and u.role != 'admin':
             s.delete(u); s.commit()
+        return jsonify({'ok': True})
+    finally:
+        s.close()
+
+
+@app.route('/api/admin/add_user', methods=['POST'])
+@role_required('admin')
+def admin_add_user():
+    d = request.json or {}
+    name = (d.get('name') or '').strip()
+    badge = (d.get('badge') or '').strip()
+    pw = (d.get('password') or '').strip()
+    if not name or not badge or not pw:
+        return jsonify({'error': 'Name, badge, and password are required.'}), 400
+    s = db()
+    try:
+        if s.query(User).filter_by(badge=badge).first():
+            return jsonify({'error': 'Badge number already in use.'}), 409
+        u = User(name=name, badge=badge,
+                 department=(d.get('department') or '').strip(),
+                 email=(d.get('email') or '').strip(),
+                 password_hash=generate_password_hash(pw),
+                 role=d.get('role') or 'officer')
+        s.add(u); s.commit()
+        return jsonify({'ok': True, 'user': user_dict(u)})
+    finally:
+        s.close()
+
+
+@app.route('/api/admin/edit_user', methods=['POST'])
+@role_required('admin')
+def admin_edit_user():
+    d = request.json or {}
+    s = db()
+    try:
+        u = s.query(User).get(d.get('user_id'))
+        if not u:
+            return jsonify({'error': 'User not found'}), 404
+        if 'name' in d:       u.name = (d['name'] or '').strip() or u.name
+        if 'badge' in d:
+            new_badge = (d['badge'] or '').strip()
+            if new_badge and new_badge != u.badge:
+                if s.query(User).filter_by(badge=new_badge).first():
+                    return jsonify({'error': 'Badge number already in use.'}), 409
+                u.badge = new_badge
+        if 'department' in d: u.department = (d['department'] or '').strip()
+        if 'email' in d:      u.email = (d['email'] or '').strip()
+        if 'role' in d and not (u.role == 'admin' and d['role'] != 'admin'):
+            u.role = d['role']
+        if d.get('password'):
+            u.password_hash = generate_password_hash(d['password'])
+        s.commit()
+        return jsonify({'ok': True, 'user': user_dict(u)})
+    finally:
+        s.close()
+
+
+# ── Officer self-service ──────────────────────────────────────────────────────
+
+@app.route('/api/profile', methods=['POST'])
+@login_required
+def update_profile():
+    d = request.json or {}
+    s = db()
+    try:
+        u = current_user(s)
+        if not u:
+            return jsonify({'error': 'not found'}), 404
+        if d.get('name', '').strip():
+            u.name = d['name'].strip()
+        if 'department' in d:
+            u.department = d['department'].strip()
+        if 'email' in d:
+            u.email = d['email'].strip()
+        if d.get('new_password'):
+            if not check_password_hash(u.password_hash, d.get('current_password', '')):
+                return jsonify({'error': 'Current password is incorrect.'}), 400
+            u.password_hash = generate_password_hash(d['new_password'])
+        s.commit()
+        return jsonify({'ok': True, 'user': user_dict(u)})
+    finally:
+        s.close()
+
+
+@app.route('/api/my_submissions')
+@login_required
+def my_submissions():
+    s = db()
+    try:
+        u = current_user(s)
+        subs = (s.query(Submission)
+                .filter(Submission.user_id == u.id)
+                .order_by(Submission.created_at.desc())
+                .all())
+        out = []
+        for sub in subs:
+            try: cats = json.loads(sub.data_json)
+            except Exception: cats = {}
+            out.append({
+                'id': sub.id,
+                'date': sub.shift_date or sub.created_at.strftime('%m/%d/%Y'),
+                'start_time': sub.start_time, 'end_time': sub.end_time,
+                'ot_hours': sub.ot_hours, 'mileage': sub.mileage,
+                'details': sub.details, 'cats': cats,
+                'created': sub.created_at.strftime('%m/%d/%Y %I:%M %p'),
+            })
+        return jsonify({'submissions': out})
+    finally:
+        s.close()
+
+
+@app.route('/api/check_duplicate')
+@login_required
+def check_duplicate():
+    date = request.args.get('date', '')
+    s = db()
+    try:
+        u = current_user(s)
+        exists = s.query(Submission).filter(
+            Submission.user_id == u.id,
+            Submission.shift_date == date
+        ).first()
+        return jsonify({'duplicate': bool(exists)})
+    finally:
+        s.close()
+
+
+# ── Announcements ─────────────────────────────────────────────────────────────
+
+@app.route('/api/announcement')
+def get_announcement():
+    s = db()
+    try:
+        return jsonify({
+            'text': get_setting(s, 'announcement_text', ''),
+            'active': get_setting(s, 'announcement_active', 'false'),
+        })
+    finally:
+        s.close()
+
+
+# ── Admin ─────────────────────────────────────────────────────────────────────
+
+@app.route('/api/admin/categories')
+@role_required('admin', 'supervisor')
+def admin_categories():
+    return jsonify({'categories': [{'key': k, 'label': l} for k, l in CATEGORIES]})
+
+
+@app.route('/api/admin/submissions')
+@role_required('admin')
+def admin_submissions():
+    officer = request.args.get('officer', 'all')
+    s = db()
+    try:
+        q = s.query(Submission)
+        if officer != 'all':
+            q = q.filter(Submission.officer_name == officer)
+        subs = q.order_by(Submission.created_at.desc()).all()
+        out = []
+        for sub in subs:
+            try: cats = json.loads(sub.data_json)
+            except Exception: cats = {}
+            out.append({'id': sub.id, 'officer': sub.officer_name, 'badge': sub.badge,
+                        'department': sub.department,
+                        'date': sub.shift_date or sub.created_at.strftime('%m/%d/%Y'),
+                        'start_time': sub.start_time, 'end_time': sub.end_time,
+                        'ot_hours': sub.ot_hours, 'mileage': sub.mileage,
+                        'details': sub.details,
+                        'cats': cats,
+                        'created': sub.created_at.strftime('%m/%d/%Y %I:%M %p')})
+        return jsonify({'submissions': out})
+    finally:
+        s.close()
+
+
+@app.route('/api/admin/update_submission', methods=['POST'])
+@role_required('admin')
+def admin_update_submission():
+    d = request.json or {}
+    s = db()
+    try:
+        sub = s.query(Submission).get(d.get('id'))
+        if not sub:
+            return jsonify({'error': 'not found'}), 404
+        if 'cats' in d:
+            sub.data_json = json.dumps({k: int(d['cats'].get(k, 0) or 0) for k in CAT_KEYS})
+        if 'shift_date' in d:  sub.shift_date  = d['shift_date']
+        if 'ot_hours'   in d:  sub.ot_hours    = d['ot_hours']
+        if 'mileage'    in d:  sub.mileage     = d['mileage']
+        if 'details'    in d:  sub.details     = d['details']
+        if 'start_time' in d:  sub.start_time  = d['start_time']
+        if 'end_time'   in d:  sub.end_time    = d['end_time']
+        s.commit()
+        return jsonify({'ok': True})
+    finally:
+        s.close()
+
+
+@app.route('/api/admin/delete_submission', methods=['POST'])
+@role_required('admin')
+def admin_delete_submission():
+    d = request.json or {}
+    s = db()
+    try:
+        sub = s.query(Submission).get(d.get('id'))
+        if sub:
+            s.delete(sub); s.commit()
+        return jsonify({'ok': True})
+    finally:
+        s.close()
+
+
+@app.route('/api/admin/add_submission', methods=['POST'])
+@role_required('admin')
+def admin_add_submission():
+    d = request.json or {}
+    s = db()
+    try:
+        # look up user by name or badge to link user_id
+        officer_name = (d.get('officer_name') or '').strip()
+        badge = (d.get('badge') or '').strip()
+        u = None
+        if badge:
+            u = s.query(User).filter_by(badge=badge).first()
+        if not u and officer_name:
+            u = s.query(User).filter_by(name=officer_name).first()
+        cats = {k: int(d.get(k, 0) or 0) for k in CAT_KEYS}
+        sub = Submission(
+            user_id=u.id if u else None,
+            officer_name=officer_name or (u.name if u else ''),
+            badge=badge or (u.badge if u else ''),
+            department=d.get('department') or (u.department if u else ''),
+            shift_date=d.get('shift_date') or '',
+            start_time=d.get('start_time') or '',
+            end_time=d.get('end_time') or '',
+            ot_hours=str(d.get('ot_hours') or ''),
+            mileage=str(d.get('mileage') or ''),
+            details=d.get('details') or '',
+            data_json=json.dumps(cats),
+            source='admin')
+        s.add(sub); s.commit()
+        return jsonify({'ok': True, 'id': sub.id})
+    finally:
+        s.close()
+
+
+# ── App Settings ──────────────────────────────────────────────────────────────
+
+SETTING_KEYS = ['app_name', 'department_name', 'default_department',
+                'allow_signup', 'maintenance_mode', 'maintenance_message',
+                'leaderboard_visible', 'require_email',
+                'announcement_active', 'announcement_text']
+SETTING_DEFAULTS = {
+    'app_name': 'ShiftLog',
+    'department_name': 'Blackfoot PD',
+    'default_department': 'Blackfoot PD',
+    'allow_signup': 'true',
+    'maintenance_mode': 'false',
+    'maintenance_message': 'ShiftLog is currently down for maintenance. Please check back soon.',
+    'leaderboard_visible': 'true',
+    'require_email': 'false',
+    'announcement_active': 'false',
+    'announcement_text': '',
+}
+
+
+@app.route('/api/settings')
+def public_settings():
+    """Public settings the frontend needs on load (no auth required)."""
+    s = db()
+    try:
+        keys = ['app_name', 'department_name', 'default_department',
+                'allow_signup', 'maintenance_mode', 'maintenance_message',
+                'leaderboard_visible', 'announcement_active', 'announcement_text']
+        return jsonify({k: get_setting(s, k, SETTING_DEFAULTS.get(k, '')) for k in keys})
+    finally:
+        s.close()
+
+
+@app.route('/api/admin/settings', methods=['GET'])
+@role_required('admin')
+def admin_get_settings():
+    s = db()
+    try:
+        return jsonify({k: get_setting(s, k, SETTING_DEFAULTS.get(k, '')) for k in SETTING_KEYS})
+    finally:
+        s.close()
+
+
+@app.route('/api/admin/settings', methods=['POST'])
+@role_required('admin')
+def admin_save_settings():
+    d = request.json or {}
+    s = db()
+    try:
+        for k in SETTING_KEYS:
+            if k in d:
+                set_setting(s, k, str(d[k]))
         return jsonify({'ok': True})
     finally:
         s.close()

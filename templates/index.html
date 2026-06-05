@@ -128,45 +128,111 @@ td{padding:8px 10px;white-space:nowrap}
 .check{width:64px;height:64px;border-radius:50%;border:3px solid var(--g);display:flex;align-items:center;justify-content:center;margin:0 auto 20px;animation:popIn .4s cubic-bezier(.16,1,.3,1);box-shadow:0 0 30px rgba(34,197,94,.25)}
 .shake{animation:shakeX .35s ease}
 canvas.confetti{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:9999}
+
+/* modal */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);z-index:200;display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;animation:fadeIn .2s}
+.modal{background:var(--card);border:1px solid var(--bd);border-radius:16px;padding:24px;max-width:560px;width:100%;animation:popIn .25s cubic-bezier(.16,1,.3,1)}
+.editgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px;margin:16px 0}
+.editrow{display:flex;align-items:center;gap:8px}
+.editrow .el{flex:1;font-size:12px;color:var(--w2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.editrow input{width:56px;background:#111;border:1px solid var(--bd);border-radius:6px;padding:6px 8px;color:var(--w);font-size:13px;text-align:center;outline:none}
+.editrow input:focus{border-color:var(--a)}
+.subrow{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--bd);flex-wrap:wrap}
+
+/* announcement banner */
+.announce{display:flex;align-items:flex-start;gap:10px;padding:12px 16px;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.3);border-radius:10px;margin-bottom:16px;animation:fadeIn .3s both}
+.announce .a-icon{font-size:18px;flex-shrink:0;margin-top:1px}
+.announce .a-text{flex:1;font-size:13px;line-height:1.5;color:var(--w2)}
+.announce .a-close{color:var(--m);cursor:pointer;font-size:16px;flex-shrink:0;padding:2px 4px}
+
+/* profile sections */
+.profile-section{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:20px;margin-bottom:16px}
+.profile-section h3{font-size:13px;font-weight:700;color:var(--a);text-transform:uppercase;letter-spacing:.6px;margin-bottom:16px}
+
+/* history table rows */
+.hist-row{padding:12px 0;border-bottom:1px solid var(--bd);cursor:pointer;transition:background .1s}
+.hist-row:hover{background:rgba(255,255,255,.02);border-radius:6px}
+.hist-expand{display:none;padding:10px 0 4px;grid-template-columns:1fr 1fr;gap:6px 16px}
+.hist-expand.open{display:grid}
+.hist-cat{font-size:11px;color:var(--m);display:flex;justify-content:space-between}
+.hist-cat span:last-child{color:var(--w2);font-weight:600}
 </style>
 </head>
 <body>
 <div class="nav">
-  <span class="logo" onclick="App.go(App.user?'form':'landing')"><span class="b">Shift</span><span class="l">Log</span></span>
+  <span class="logo" onclick="App.go(App.user?'form':'landing')" id="app-logo"><span class="b">Shift</span><span class="l">Log</span></span>
   <div class="nav-spacer"></div>
   <div id="navlinks" style="display:flex;gap:6px;align-items:center"></div>
 </div>
 <div class="wrap"><div id="view"></div></div>
 
 <script>
-const CATS = [
-  ['total_contacts','Total Contacts'],['seat_belt','Seat Belt Citations'],
-  ['child_safety_seat','Child Safety Seat'],['speeding','Speeding Citations'],
-  ['texting','Texting Citations'],['suspended_licenses','Suspended Licenses'],
-  ['uninsured_motorists','Uninsured Motorists'],['dui_alcohol','DUI - Alcohol'],
-  ['dui_drugs','DUI - Drugs'],['dui_drugs_alcohol','DUI - Drugs & Alcohol'],
-  ['underage_alcohol','Underage Alcohol'],['reckless_driving','Reckless Driving'],
-  ['inattentive_driving','Inattentive Driving'],['felony_arrests','Felony Arrests'],
-  ['recovered_stolen','Recovered Stolen'],['fugitives','Fugitives'],
-  ['motorcycle_endorsement','Motorcycle'],['bicycle_pedestrian','Bicycle/Pedestrian'],
-  ['other_activity','Other']
+// Grouped categories with icons: [key, icon, label]
+const CAT_GROUPS = [
+  {title:null, spotlight:true, items:[
+    ['total_contacts','🚔','Total Contacts']
+  ]},
+  {title:'🦺 Safety Citations', items:[
+    ['seat_belt','🔒','Seat Belt Citations'],
+    ['child_safety_seat','👶','Child Safety Seat']
+  ]},
+  {title:'🚦 Traffic Violations', items:[
+    ['speeding','⚡','Speeding Citations'],
+    ['texting','📱','Texting Citations'],
+    ['suspended_licenses','🪪','Suspended Licenses'],
+    ['uninsured_motorists','🚫','Uninsured Motorists'],
+    ['reckless_driving','💥','Reckless Driving'],
+    ['inattentive_driving','😵','Inattentive Driving']
+  ]},
+  {title:'🍺 DUI & Alcohol', items:[
+    ['dui_alcohol','🍺','DUI - Alcohol'],
+    ['dui_drugs','💊','DUI - Drugs'],
+    ['dui_drugs_alcohol','⚗️','DUI - Drugs & Alcohol'],
+    ['underage_alcohol','🔞','Underage Alcohol']
+  ]},
+  {title:'🚨 Criminal Activity', items:[
+    ['felony_arrests','⛓️','Felony Arrests'],
+    ['recovered_stolen','🚗','Recovered Stolen Vehicles'],
+    ['fugitives','🏃','Fugitives Apprehended']
+  ]},
+  {title:'🏍️ Specialty', items:[
+    ['motorcycle_endorsement','🏍️','Motorcycle Endorsement'],
+    ['bicycle_pedestrian','🚲','Bicycle / Pedestrian'],
+    ['other_activity','📋','Other Activity']
+  ]},
 ];
+// Flat list (key -> label) for totals, init, and lookups
+const CATS = CAT_GROUPS.flatMap(g => g.items.map(([k,icon,label]) => [k,label]));
+const CAT_ICON = Object.fromEntries(CAT_GROUPS.flatMap(g => g.items.map(([k,icon]) => [k,icon])));
+
 const MEDIA = [
-  ['media_letters','Letters'],['media_press','Press Release'],['media_social','Social Media'],
-  ['media_events','Events'],['media_interviews','Interviews'],
-  ['media_presentations','Presentations'],['media_other','Other']
+  ['media_letters','✉️','Letters'],['media_press','📰','Press Release'],['media_social','📲','Social Media'],
+  ['media_events','🎪','Events'],['media_interviews','🎤','Interviews'],
+  ['media_presentations','📊','Presentations'],['media_other','📋','Other']
 ];
 
 const App = {
   user: null,
   page: 'landing',
   form: {},
+  settings: {},
 
   async init(){
     try {
-      const r = await fetch('/api/me');
-      const j = await r.json();
-      this.user = j.user;
+      const [meR, setR] = await Promise.all([fetch('/api/me'), fetch('/api/settings')]);
+      const meJ = await meR.json();
+      const setJ = await setR.json();
+      this.user = meJ.user;
+      this.settings = setJ || {};
+      if(this.settings.app_name) {
+        document.title = this.settings.app_name + ' — HVE Reporting';
+        const logo = document.getElementById('app-logo');
+        if(logo) {
+          const name = this.settings.app_name;
+          const mid = Math.ceil(name.length/2);
+          logo.innerHTML = `<span class="b">${name.slice(0,mid)}</span><span class="l">${name.slice(mid)}</span>`;
+        }
+      }
     } catch(e){}
     this.go(this.user ? 'form' : 'landing');
   },
@@ -196,6 +262,7 @@ const App = {
     let links = [];
     if(this.user){
       links.push(['form','Form']);
+      links.push(['history','My History']);
       if(['admin','supervisor'].includes(this.user.role)) links.push(['supervisor','Supervisor']);
       if(this.user.role==='admin') links.push(['admin','Admin']);
     }
@@ -204,7 +271,7 @@ const App = {
     ).join('');
     if(this.user){
       html += `<div style="display:flex;align-items:center;gap:6px;margin-left:6px">
-        <div class="avatar">${(this.user.name||'?')[0]}</div>
+        <div class="avatar" style="cursor:pointer" onclick="App.go('profile')" title="My Profile">${(this.user.name||'?')[0]}</div>
         <span style="font-size:10px;color:var(--w2);max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${this.user.name}</span>
         <span style="font-size:10px;color:var(--m);cursor:pointer" onclick="App.logout()">Logout</span>
       </div>`;
@@ -262,7 +329,7 @@ App.page_signup = function(v){
         <div class="field"><label class="label">Last Name</label><input class="input" id="su-name" placeholder="e.g. Hansen"/></div>
         <div class="row" style="margin-bottom:14px">
           <div class="field"><label class="label">Badge Number</label><input class="input" id="su-badge" placeholder="e.g. 4521"/></div>
-          <div class="field"><label class="label">Department</label><input class="input" id="su-dept" placeholder="Blackfoot PD" value="Blackfoot PD"/></div>
+          <div class="field"><label class="label">Department</label><input class="input" id="su-dept" placeholder="Blackfoot PD" value="${App.settings.default_department||'Blackfoot PD'}"/></div>
         </div>
         <div class="field"><label class="label">Email</label><input class="input" id="su-email" type="email" placeholder="officer@department.gov"/></div>
         <div class="field"><label class="label">Password</label><input class="input" id="su-pw" type="password" placeholder="Create a password"/></div>
@@ -309,10 +376,13 @@ App.showSignupSuccess = function(data){
 };
 
 App.page_login = function(v){
+  const maint = App.settings.maintenance_mode === 'true';
+  const maintMsg = App.settings.maintenance_message || 'ShiftLog is currently undergoing maintenance.';
   v.innerHTML = `
     <div class="narrow">
       <h2 class="h1">Welcome Back</h2>
       <p class="sub">Log in with your badge number.</p>
+      ${maint ? `<div class="err" style="color:var(--am);background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.2);margin-bottom:14px">🚧 ${maintMsg}</div>` : ''}
       <div class="card">
         <div class="field"><label class="label">Badge Number</label><input class="input" id="li-badge" placeholder="Enter badge #"/></div>
         <div class="field"><label class="label">Password</label><input class="input" id="li-pw" type="password" placeholder="Your password" onkeydown="if(event.key==='Enter')App.doLogin()"/></div>
@@ -321,7 +391,7 @@ App.page_login = function(v){
       </div>
       <div class="center" style="margin-top:14px">
         <span class="muted" style="font-size:12px">New here? </span>
-        <a style="font-size:12px;font-weight:600;cursor:pointer" onclick="App.go('signup')">Sign Up</a>
+        ${App.settings.allow_signup !== 'false' ? `<a style="font-size:12px;font-weight:600;cursor:pointer" onclick="App.go('signup')">Sign Up</a>` : `<span style="font-size:12px;color:var(--m)">Contact your administrator for access.</span>`}
       </div>
     </div>`;
 };
@@ -342,18 +412,29 @@ App.page_form = function(v){
   if(!this.user){ this.go('login'); return; }
   this.form = {};
   const u = this.user;
-  const counterRow = (key,label,spot)=>`
+  const counterRow = (key,icon,label)=>`
     <div class="counter">
-      <span class="cl">${label}</span>
+      <span class="cl"><span style="display:inline-block;width:22px;text-align:center;margin-right:6px">${icon||''}</span>${label}</span>
       <div class="stepper" id="st-${key}">
         <button class="minus" onclick="App.bump('${key}',-1)">−</button>
         <span class="val" id="v-${key}" style="color:var(--w)">0</span>
         <button class="plus" onclick="App.bump('${key}',1)">+</button>
       </div>
     </div>`;
+  const groupHTML = CAT_GROUPS.map(g=>{
+    if(g.spotlight){
+      const [k,icon,label]=g.items[0];
+      return `<div class="card" style="margin-bottom:14px"><div class="spotlight">${counterRow(k,icon,label)}</div></div>`;
+    }
+    return `<div class="card" style="margin-bottom:14px">
+      <div class="label" style="margin-bottom:8px;font-size:11px;color:var(--w2)">${g.title}</div>
+      ${g.items.map(([k,icon,label])=>counterRow(k,icon,label)).join('')}
+    </div>`;
+  }).join('');
   v.innerHTML = `
     <div style="display:flex;gap:20px;align-items:flex-start;max-width:880px;margin:0 auto;flex-wrap:wrap">
       <div style="flex:1;min-width:280px">
+        <div id="announce-banner"></div>
         <div class="card" style="margin-bottom:14px;padding:14px">
           <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
             <div><div class="label">Officer</div><div style="font-size:14px;font-weight:700">${u.name}</div></div>
@@ -365,24 +446,22 @@ App.page_form = function(v){
         </div>
         <div class="card" style="margin-bottom:14px;padding:14px">
           <div class="row">
-            <div class="field"><label class="label">Date</label><input class="input" id="f-date" type="date"/></div>
+            <div class="field"><label class="label">Date</label><input class="input" id="f-date" type="date" onchange="App.checkDuplicate(this.value)"/></div>
             <div class="field"><label class="label">Start Time</label><input class="input" id="f-start" placeholder="e.g. 6:00 PM"/></div>
             <div class="field"><label class="label">End Time</label><input class="input" id="f-end" placeholder="e.g. 2:00 AM"/></div>
             <div class="field" style="flex:0 0 56px"><label class="label">OT</label><input class="input" id="f-ot" placeholder="0"/></div>
             <div class="field" style="flex:0 0 64px"><label class="label">Miles</label><input class="input" id="f-miles" placeholder="0"/></div>
           </div>
+          <div id="dup-warn" style="display:none;margin-top:8px"></div>
+        </div>
+        ${groupHTML}
+        <div class="card" style="margin-bottom:14px">
+          <div class="label" style="margin-bottom:10px">📣 Media Outreach</div>
+          ${MEDIA.map(([k,icon,l])=>counterRow(k,icon,l)).join('')}
         </div>
         <div class="card" style="margin-bottom:14px">
-          <div class="spotlight">${counterRow(CATS[0][0],CATS[0][1],true)}</div>
-          ${CATS.slice(1).map(([k,l])=>counterRow(k,l)).join('')}
-        </div>
-        <div class="card" style="margin-bottom:14px">
-          <div class="label" style="margin-bottom:10px">Media Outreach</div>
-          ${MEDIA.map(([k,l])=>counterRow(k,l)).join('')}
-        </div>
-        <div class="card" style="margin-bottom:14px">
-          <label class="label">Details & Comments</label>
-          <textarea class="input" id="f-details" rows="3" placeholder="Notes about the shift..."></textarea>
+          <label class="label">📝 Details & Comments</label>
+          <textarea class="input" id="f-details" rows="3" placeholder="Notes about the shift..." style="margin-top:6px"></textarea>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center">
           <div style="font-size:13px;color:var(--m)">Total: <strong id="f-total" style="color:var(--m);font-size:18px">0</strong></div>
@@ -391,8 +470,9 @@ App.page_form = function(v){
       </div>
       <div class="lb" id="lb"><div class="muted" style="font-size:11px">Loading leaders…</div></div>
     </div>`;
-  CATS.concat(MEDIA).forEach(([k])=> this.form[k]=0);
+  CATS.concat(MEDIA.map(m=>[m[0],m[2]])).forEach(([k])=> this.form[k]=0);
   this.loadLeaderboard();
+  this.loadAnnouncementBanner();
 };
 
 App.bump = function(key,delta){
@@ -421,6 +501,179 @@ App.loadLeaderboard = async function(){
   lb.innerHTML = `<div class="lb-head"><div class="lb-dot"></div><span class="lb-title">Today's Leaders</span></div>${rows}
     <div style="margin-top:8px;text-align:center;font-size:8px;color:var(--m)">Live • updates every 30s</div>`;
   clearTimeout(App._lbTimer); App._lbTimer=setTimeout(()=>App.loadLeaderboard(),30000);
+};
+
+App.loadAnnouncementBanner = async function(){
+  const el = document.getElementById('announce-banner'); if(!el) return;
+  // Use settings loaded at init first, fallback to API
+  const active = App.settings.announcement_active === 'true';
+  const text = App.settings.announcement_text || '';
+  if(!active || !text.trim()){ el.innerHTML=''; return; }
+  if(App._announceDismissed){ el.innerHTML=''; return; }
+  el.innerHTML=`<div class="announce">
+    <span class="a-icon">📢</span>
+    <span class="a-text">${text}</span>
+    <span class="a-close" onclick="App._announceDismissed=true;document.getElementById('announce-banner').innerHTML=''" title="Dismiss">✕</span>
+  </div>`;
+};
+
+App.checkDuplicate = async function(date){
+  const warn = document.getElementById('dup-warn'); if(!warn||!date) return;
+  const {data} = await App.api('/api/check_duplicate?date='+encodeURIComponent(date));
+  if(data.duplicate){
+    warn.style.display='block';
+    warn.innerHTML=`<div class="err" style="color:var(--am);background:rgba(245,158,11,.08);border-color:rgba(245,158,11,.25)">
+      ⚠️ You already have a submission for this date. Submitting again will add a second entry.
+    </div>`;
+  } else {
+    warn.style.display='none'; warn.innerHTML='';
+  }
+};
+
+// ===================== PROFILE PAGE =====================
+
+App.page_profile = function(v){
+  if(!this.user){ this.go('login'); return; }
+  const u = this.user;
+  v.innerHTML=`<div class="container" style="max-width:560px">
+    <h1 class="h1">My Profile</h1>
+    <p class="sub">Update your info and change your password.</p>
+
+    <div class="profile-section">
+      <h3>👤 Account Info</h3>
+      <div class="row" style="margin-bottom:0">
+        <div class="field"><label class="label">Last Name</label><input class="input" id="p-name" value="${u.name||''}"/></div>
+        <div class="field"><label class="label">Badge #</label><input class="input" id="p-badge" value="${u.badge||''}" disabled style="opacity:.5;cursor:not-allowed"/></div>
+      </div>
+      <div class="row" style="margin-bottom:0">
+        <div class="field"><label class="label">Department</label><input class="input" id="p-dept" value="${u.department||''}"/></div>
+        <div class="field"><label class="label">Email</label><input class="input" id="p-email" type="email" value="${u.email||''}"/></div>
+      </div>
+      <div id="p-info-err"></div>
+      <button class="btn accent small" id="p-info-btn" onclick="App.saveProfileInfo()">Save Info</button>
+    </div>
+
+    <div class="profile-section">
+      <h3>🔒 Change Password</h3>
+      <div class="field"><label class="label">Current Password</label><input class="input" id="p-cur-pw" type="password" placeholder="Your current password"/></div>
+      <div class="field"><label class="label">New Password</label><input class="input" id="p-new-pw" type="password" placeholder="New password"/></div>
+      <div class="field"><label class="label">Confirm New Password</label><input class="input" id="p-con-pw" type="password" placeholder="Confirm new password"/></div>
+      <div id="p-pw-err"></div>
+      <button class="btn accent small" id="p-pw-btn" onclick="App.saveProfilePassword()">Change Password</button>
+    </div>
+
+    <div class="profile-section" style="border-color:rgba(59,130,246,.2)">
+      <h3 style="color:var(--m)">ℹ️ Account Details</h3>
+      <div style="display:flex;gap:24px;flex-wrap:wrap">
+        <div><div class="label">Role</div><div style="font-size:13px;font-weight:600;color:var(--a)">${u.role}</div></div>
+        <div><div class="label">Badge</div><div style="font-size:13px;font-weight:600">#${u.badge}</div></div>
+      </div>
+    </div>
+  </div>`;
+};
+
+App.saveProfileInfo = async function(){
+  const g=id=>document.getElementById(id).value.trim();
+  const body={name:g('p-name'), department:g('p-dept'), email:g('p-email')};
+  const errEl=document.getElementById('p-info-err');
+  const btn=document.getElementById('p-info-btn'); btn.disabled=true; btn.innerHTML='Saving…';
+  const {ok,data}=await App.api('/api/profile','POST',body);
+  btn.disabled=false; btn.textContent='Save Info';
+  if(!ok){ errEl.innerHTML=`<div class="err shake">${data.error||'Failed.'}</div>`; return; }
+  App.user=data.user;
+  App.renderNav();
+  errEl.innerHTML='<div class="err" style="color:var(--g);background:rgba(34,197,94,.08);border-color:rgba(34,197,94,.2)">✓ Info updated.</div>';
+  setTimeout(()=>{ if(errEl) errEl.innerHTML=''; },3000);
+};
+
+App.saveProfilePassword = async function(){
+  const g=id=>document.getElementById(id).value;
+  const cur=g('p-cur-pw'), nw=g('p-new-pw'), con=g('p-con-pw');
+  const errEl=document.getElementById('p-pw-err');
+  if(!cur||!nw){ errEl.innerHTML='<div class="err shake">Fill in all password fields.</div>'; return; }
+  if(nw!==con){ errEl.innerHTML='<div class="err shake">New passwords do not match.</div>'; return; }
+  if(nw.length<6){ errEl.innerHTML='<div class="err shake">Password must be at least 6 characters.</div>'; return; }
+  const btn=document.getElementById('p-pw-btn'); btn.disabled=true; btn.innerHTML='Saving…';
+  const {ok,data}=await App.api('/api/profile','POST',{current_password:cur, new_password:nw});
+  btn.disabled=false; btn.textContent='Change Password';
+  if(!ok){ errEl.innerHTML=`<div class="err shake">${data.error||'Failed.'}</div>`; return; }
+  document.getElementById('p-cur-pw').value='';
+  document.getElementById('p-new-pw').value='';
+  document.getElementById('p-con-pw').value='';
+  errEl.innerHTML='<div class="err" style="color:var(--g);background:rgba(34,197,94,.08);border-color:rgba(34,197,94,.2)">✓ Password changed.</div>';
+  setTimeout(()=>{ if(errEl) errEl.innerHTML=''; },3000);
+};
+
+// ===================== MY HISTORY PAGE =====================
+
+App.page_history = function(v){
+  if(!this.user){ this.go('login'); return; }
+  v.innerHTML=`<div class="container">
+    <h1 class="h1">My Submission History</h1>
+    <p class="sub">All your past HVE reports. Click a row to expand details.</p>
+    <div id="hist-content"><div class="muted" style="font-size:12px">Loading…</div></div>
+  </div>`;
+  App.loadHistory();
+};
+
+App.loadHistory = async function(){
+  const el=document.getElementById('hist-content'); if(!el) return;
+  const {data}=await App.api('/api/my_submissions');
+  const subs=data.submissions||[];
+  if(!subs.length){
+    el.innerHTML='<div class="card"><p class="muted" style="font-size:13px">No submissions yet. Submit your first report using the Form.</p></div>';
+    return;
+  }
+
+  // Compute totals
+  let totalContacts=0, totalForms=subs.length;
+  subs.forEach(s=>{ totalContacts+=(s.cats.total_contacts||0); });
+
+  const catLabel = Object.fromEntries(CATS);
+
+  const rows = subs.map((sub,i)=>{
+    const tc = sub.cats.total_contacts||0;
+    const citations = ['seat_belt','speeding','texting','suspended_licenses','child_safety_seat',
+      'reckless_driving','inattentive_driving','uninsured_motorists'].reduce((a,k)=>a+(sub.cats[k]||0),0);
+    const arrests = ['dui_alcohol','dui_drugs','dui_drugs_alcohol','felony_arrests'].reduce((a,k)=>a+(sub.cats[k]||0),0);
+    const activeCats = CATS.filter(([k])=>(sub.cats[k]||0)>0);
+    return `<div class="hist-row" onclick="App.toggleHist(${i})">
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <div style="min-width:90px">
+          <div style="font-size:13px;font-weight:700;color:var(--w)">${sub.date}</div>
+          <div style="font-size:10px;color:var(--m)">${sub.start_time&&sub.end_time?sub.start_time+' – '+sub.end_time:sub.created}</div>
+        </div>
+        <div style="display:flex;gap:16px;flex:1;flex-wrap:wrap">
+          <div style="text-align:center"><div style="font-size:17px;font-weight:800;color:var(--a)">${tc}</div><div style="font-size:8px;color:var(--m);text-transform:uppercase">contacts</div></div>
+          <div style="text-align:center"><div style="font-size:17px;font-weight:800;color:#8b5cf6">${citations}</div><div style="font-size:8px;color:var(--m);text-transform:uppercase">citations</div></div>
+          <div style="text-align:center"><div style="font-size:17px;font-weight:800;color:var(--r)">${arrests}</div><div style="font-size:8px;color:var(--m);text-transform:uppercase">arrests</div></div>
+          ${sub.ot_hours?`<div style="text-align:center"><div style="font-size:17px;font-weight:800;color:var(--g)">${sub.ot_hours}</div><div style="font-size:8px;color:var(--m);text-transform:uppercase">OT hrs</div></div>`:''}
+          ${sub.mileage?`<div style="text-align:center"><div style="font-size:17px;font-weight:800">${sub.mileage}</div><div style="font-size:8px;color:var(--m);text-transform:uppercase">miles</div></div>`:''}
+        </div>
+        <span style="font-size:12px;color:var(--m)" id="hist-arrow-${i}">▸</span>
+      </div>
+      <div class="hist-expand" id="hist-exp-${i}">
+        ${activeCats.map(([k,l])=>`<div class="hist-cat"><span>${l}</span><span>${sub.cats[k]}</span></div>`).join('')}
+        ${sub.details?`<div style="grid-column:1/-1;font-size:11px;color:var(--m);padding-top:4px;border-top:1px solid var(--bd);margin-top:4px">📝 ${sub.details}</div>`:''}
+        ${!activeCats.length&&!sub.details?'<div style="font-size:11px;color:var(--m);grid-column:1/-1">No category data recorded.</div>':''}
+      </div>
+    </div>`;
+  }).join('');
+
+  el.innerHTML=`
+    <div class="tiles" style="margin-bottom:16px">
+      <div class="tile glow"><div class="tv" style="color:var(--a)">${totalContacts}</div><div class="tl">Total Contacts</div></div>
+      <div class="tile"><div class="tv">${totalForms}</div><div class="tl">Reports Filed</div></div>
+    </div>
+    <div class="card">${rows}</div>`;
+};
+
+App.toggleHist = function(i){
+  const exp=document.getElementById('hist-exp-'+i);
+  const arr=document.getElementById('hist-arrow-'+i);
+  if(!exp) return;
+  const open=exp.classList.toggle('open');
+  if(arr) arr.textContent=open?'▾':'▸';
 };
 
 App.submitForm = async function(){
@@ -648,13 +901,23 @@ App.loadPerformance = async function(){
 
 App.page_admin = function(v){
   if(!this.user||this.user.role!=='admin'){ this.go('form'); return; }
+  this.adminTab = this.adminTab || 'users';
   v.innerHTML=`<div class="container">
     <h1 class="h1">Admin Panel</h1>
-    <p class="sub">Manage users and approve supervisor requests.</p>
+    <p class="sub">Full control — users, submissions, and app settings.</p>
+    <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap">
+      <button class="nav-btn ${this.adminTab==='users'?'active':''}" onclick="App.setAdminTab('users')">👥 Users</button>
+      <button class="nav-btn ${this.adminTab==='subs'?'active':''}" onclick="App.setAdminTab('subs')">📄 Submissions</button>
+      <button class="nav-btn ${this.adminTab==='settings'?'active':''}" onclick="App.setAdminTab('settings')">⚙️ Settings</button>
+    </div>
     <div id="admin-content"><div class="muted" style="font-size:12px">Loading…</div></div>
   </div>`;
-  this.loadAdmin();
+  if(this.adminTab==='users') this.loadAdmin();
+  else if(this.adminTab==='subs') this.loadAdminSubs();
+  else this.loadAdminSettings();
 };
+
+App.setAdminTab = function(tab){ App.adminTab=tab; App.go('admin'); };
 
 App.loadAdmin = async function(){
   const {data}=await App.api('/api/admin/users');
@@ -675,15 +938,379 @@ App.loadAdmin = async function(){
     </div>`;
   }
   html+=`<div class="card">
-    <div style="font-size:12px;font-weight:700;margin-bottom:14px;text-transform:uppercase;letter-spacing:.8px">All Users (${users.length})</div>
-    ${users.map(u=>`<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--bd)">
+    <div style="display:flex;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+      <span style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.8px">All Users (${users.length})</span>
+      <div style="flex:1"></div>
+      <button class="btn accent small" onclick="App.showAddUserModal()">＋ Add User</button>
+    </div>
+    ${users.map(u=>`<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--bd);flex-wrap:wrap">
       <div class="avatar" style="background:${u.role==='admin'?'rgba(245,158,11,.18)':u.role==='supervisor'?'rgba(59,130,246,.18)':'#151515'};color:${roleColor(u.role)}">${u.name[0]}</div>
-      <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${u.name}</div><div style="font-size:10px;color:var(--m);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">#${u.badge} • ${u.email||'no email'}</div></div>
-      <span class="tag" style="background:${roleColor(u.role)}22;color:${roleColor(u.role)}">${u.role==='pending_supervisor'?'pending':u.role}</span>
-      ${u.role!=='admin'?`<span style="font-size:12px;color:#444;cursor:pointer;padding:6px" onclick="App.deleteUser(${u.id},'${u.name}')">🗑</span>`:''}
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${u.name}</div>
+        <div style="font-size:10px;color:var(--m);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">#${u.badge} • ${u.email||'no email'} • ${u.department||'—'}</div>
+      </div>
+      <select class="input" style="width:auto;font-size:10px;padding:5px 8px" ${u.role==='admin'?'disabled':''} onchange="App.setRole(${u.id},this.value)">
+        ${['officer','supervisor','pending_supervisor','admin'].map(r=>`<option value="${r}" ${u.role===r?'selected':''}>${r==='pending_supervisor'?'pending':r}</option>`).join('')}
+      </select>
+      <button class="btn outline small" onclick="App.showEditUserModal(${JSON.stringify(u).replace(/"/g,'&quot;')})">✎ Edit</button>
+      ${u.role!=='admin'?`<span style="font-size:13px;color:#555;cursor:pointer;padding:6px" title="Delete user" onclick="App.deleteUser(${u.id},'${u.name.replace(/'/g,'')}')">🗑</span>`:'<span style="width:25px"></span>'}
     </div>`).join('')}
   </div>`;
   el.innerHTML=html;
+};
+
+App.showAddUserModal = function(){
+  const modal=document.createElement('div'); modal.className='modal-bg'; modal.id='editmodal';
+  modal.innerHTML=`<div class="modal">
+    <div style="display:flex;align-items:center;margin-bottom:16px">
+      <h2 style="font-size:18px;font-weight:800">Add New User</h2>
+      <div style="flex:1"></div>
+      <span style="cursor:pointer;color:var(--m);font-size:20px" onclick="App.closeModal()">✕</span>
+    </div>
+    <div class="row" style="margin-bottom:0">
+      <div class="field"><label class="label">Last Name</label><input class="input" id="au-name" placeholder="e.g. Hansen"/></div>
+      <div class="field"><label class="label">Badge #</label><input class="input" id="au-badge" placeholder="e.g. 4521"/></div>
+    </div>
+    <div class="row" style="margin-bottom:0">
+      <div class="field"><label class="label">Department</label><input class="input" id="au-dept" value="Blackfoot PD"/></div>
+      <div class="field"><label class="label">Email</label><input class="input" id="au-email" type="email" placeholder="officer@dept.gov"/></div>
+    </div>
+    <div class="row" style="margin-bottom:0">
+      <div class="field"><label class="label">Password</label><input class="input" id="au-pw" type="password" placeholder="Temporary password"/></div>
+      <div class="field"><label class="label">Role</label>
+        <select class="input" id="au-role">
+          <option value="officer">Officer</option>
+          <option value="supervisor">Supervisor</option>
+          <option value="admin">Admin</option>
+        </select>
+      </div>
+    </div>
+    <div id="au-err"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px">
+      <button class="btn outline small" onclick="App.closeModal()">Cancel</button>
+      <button class="btn accent small" id="au-save" onclick="App.doAddUser()">Create User</button>
+    </div>
+  </div>`;
+  document.body.appendChild(modal);
+  modal.onclick=e=>{ if(e.target===modal) App.closeModal(); };
+};
+
+App.doAddUser = async function(){
+  const g=id=>document.getElementById(id).value.trim();
+  const body={name:g('au-name'),badge:g('au-badge'),department:g('au-dept'),
+    email:g('au-email'),password:g('au-pw'),role:g('au-role')};
+  const errEl=document.getElementById('au-err');
+  if(!body.name||!body.badge||!body.password){
+    errEl.innerHTML='<div class="err shake">Name, badge, and password are required.</div>'; return;
+  }
+  const btn=document.getElementById('au-save'); btn.disabled=true; btn.innerHTML='Creating…';
+  const {ok,data}=await App.api('/api/admin/add_user','POST',body);
+  if(!ok){ errEl.innerHTML=`<div class="err shake">${data.error||'Failed.'}</div>`; btn.disabled=false; btn.textContent='Create User'; return; }
+  App.closeModal(); App.loadAdmin();
+};
+
+App.showEditUserModal = function(u){
+  if(typeof u==='string') u=JSON.parse(u);
+  const modal=document.createElement('div'); modal.className='modal-bg'; modal.id='editmodal';
+  modal.innerHTML=`<div class="modal">
+    <div style="display:flex;align-items:center;margin-bottom:16px">
+      <h2 style="font-size:18px;font-weight:800">Edit User</h2>
+      <div style="flex:1"></div>
+      <span style="cursor:pointer;color:var(--m);font-size:20px" onclick="App.closeModal()">✕</span>
+    </div>
+    <div class="row" style="margin-bottom:0">
+      <div class="field"><label class="label">Last Name</label><input class="input" id="eu-name" value="${u.name||''}"/></div>
+      <div class="field"><label class="label">Badge #</label><input class="input" id="eu-badge" value="${u.badge||''}" ${u.role==='admin'?'disabled':''}/></div>
+    </div>
+    <div class="row" style="margin-bottom:0">
+      <div class="field"><label class="label">Department</label><input class="input" id="eu-dept" value="${u.department||''}"/></div>
+      <div class="field"><label class="label">Email</label><input class="input" id="eu-email" type="email" value="${u.email||''}"/></div>
+    </div>
+    <div class="field"><label class="label">New Password <span style="color:var(--m)">(leave blank to keep current)</span></label>
+      <input class="input" id="eu-pw" type="password" placeholder="Enter new password to change…"/>
+    </div>
+    <div id="eu-err"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px">
+      <button class="btn outline small" onclick="App.closeModal()">Cancel</button>
+      <button class="btn accent small" id="eu-save" onclick="App.doEditUser(${u.id})">Save Changes</button>
+    </div>
+  </div>`;
+  document.body.appendChild(modal);
+  modal.onclick=e=>{ if(e.target===modal) App.closeModal(); };
+};
+
+App.doEditUser = async function(id){
+  const g=id2=>document.getElementById(id2).value.trim();
+  const body={user_id:id, name:g('eu-name'), badge:g('eu-badge'),
+    department:g('eu-dept'), email:g('eu-email')};
+  const pw=g('eu-pw'); if(pw) body.password=pw;
+  const errEl=document.getElementById('eu-err');
+  const btn=document.getElementById('eu-save'); btn.disabled=true; btn.innerHTML='Saving…';
+  const {ok,data}=await App.api('/api/admin/edit_user','POST',body);
+  if(!ok){ errEl.innerHTML=`<div class="err shake">${data.error||'Failed.'}</div>`; btn.disabled=false; btn.textContent='Save Changes'; return; }
+  App.closeModal(); App.loadAdmin();
+};
+
+App.loadAdminSubs = async function(){
+  const el=document.getElementById('admin-content'); if(!el) return;
+  el.innerHTML='<div class="muted" style="font-size:12px">Loading submissions…</div>';
+  const [offRes, catRes, subRes] = await Promise.all([
+    App.api('/api/officers'), App.api('/api/admin/categories'),
+    App.api('/api/admin/submissions?officer='+encodeURIComponent(App.subFilter||'all'))
+  ]);
+  App._adminCats = catRes.data.categories||[];
+  const subs = subRes.data.submissions||[];
+  const officers = offRes.data.officers||[];
+  App._adminSubs = subs;
+  el.innerHTML = `
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+        <span style="font-size:12px;font-weight:700;color:var(--a);text-transform:uppercase;letter-spacing:.8px">📄 Submitted Reports (${subs.length})</span>
+        <div style="flex:1"></div>
+        <select class="input" style="width:auto;font-size:11px;padding:7px 10px" onchange="App.subFilter=this.value;App.loadAdminSubs()">
+          <option value="all">All Officers</option>
+          ${officers.map(o=>`<option value="${o}" ${App.subFilter===o?'selected':''}>${o}</option>`).join('')}
+        </select>
+        <button class="btn accent small" onclick="App.showAddSubModal()">＋ Add Submission</button>
+      </div>
+      ${subs.length? subs.map(sub=>{
+        const total = Object.values(sub.cats).reduce((a,b)=>a+b,0);
+        return `<div class="subrow">
+          <div style="flex:1;min-width:140px">
+            <div style="font-size:13px;font-weight:600">${sub.officer||'—'} <span style="color:var(--m);font-weight:400">#${sub.badge||''}</span></div>
+            <div style="font-size:10px;color:var(--m)">${sub.date} • submitted ${sub.created}</div>
+          </div>
+          <div style="text-align:center"><div style="font-size:16px;font-weight:800;color:var(--a)">${sub.cats.total_contacts||0}</div><div style="font-size:8px;color:var(--m);text-transform:uppercase">contacts</div></div>
+          <div style="text-align:center"><div style="font-size:16px;font-weight:800">${total}</div><div style="font-size:8px;color:var(--m);text-transform:uppercase">total</div></div>
+          <button class="btn outline small" onclick="App.editSub(${sub.id})">✎ Edit</button>
+          <span style="font-size:13px;color:#555;cursor:pointer;padding:6px" title="Delete report" onclick="App.deleteSub(${sub.id})">🗑</span>
+        </div>`;
+      }).join('') : '<div class="muted" style="font-size:12px;padding:10px 0">No submissions found.</div>'}
+    </div>`;
+};
+
+App.showAddSubModal = async function(){
+  const offRes = await App.api('/api/admin/users');
+  const officers = (offRes.data.users||[]).filter(u=>u.role==='officer'||u.role==='supervisor'||u.role==='admin');
+  const cats = App._adminCats||[];
+  const today = new Date().toISOString().slice(0,10);
+  const modal=document.createElement('div'); modal.className='modal-bg'; modal.id='editmodal';
+  modal.innerHTML=`<div class="modal" style="max-width:640px">
+    <div style="display:flex;align-items:center;margin-bottom:4px">
+      <h2 style="font-size:18px;font-weight:800">Add Submission</h2>
+      <div style="flex:1"></div>
+      <span style="cursor:pointer;color:var(--m);font-size:20px" onclick="App.closeModal()">✕</span>
+    </div>
+    <p style="color:var(--m);font-size:12px;margin-bottom:12px">Manually add a report for any officer.</p>
+    <div class="row" style="margin-bottom:0">
+      <div class="field"><label class="label">Officer</label>
+        <select class="input" id="as-officer" onchange="App._fillSubOfficer()">
+          <option value="">— Select officer —</option>
+          ${officers.map(u=>`<option value="${u.id}" data-name="${u.name}" data-badge="${u.badge}" data-dept="${u.department||''}">${u.name} #${u.badge}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field"><label class="label">Shift Date</label><input class="input" id="as-date" type="date" value="${today}"/></div>
+    </div>
+    <div class="row" style="margin-bottom:0">
+      <div class="field"><label class="label">Start Time</label><input class="input" id="as-start" placeholder="e.g. 6:00 PM"/></div>
+      <div class="field"><label class="label">End Time</label><input class="input" id="as-end" placeholder="e.g. 2:00 AM"/></div>
+      <div class="field" style="flex:0 0 70px"><label class="label">OT Hrs</label><input class="input" id="as-ot" placeholder="0"/></div>
+      <div class="field" style="flex:0 0 70px"><label class="label">Miles</label><input class="input" id="as-miles" placeholder="0"/></div>
+    </div>
+    <div class="editgrid" style="margin:12px 0">
+      ${cats.map(c=>`<div class="editrow"><span class="el">${c.label}</span><input type="number" min="0" id="as-${c.key}" value="0"/></div>`).join('')}
+    </div>
+    <div class="field"><label class="label">Details</label><textarea class="input" id="as-details" rows="2" placeholder="Optional notes…"></textarea></div>
+    <div id="as-err"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn outline small" onclick="App.closeModal()">Cancel</button>
+      <button class="btn accent small" id="as-save" onclick="App.doAddSub()">Save Submission</button>
+    </div>
+  </div>`;
+  document.body.appendChild(modal);
+  modal.onclick=e=>{ if(e.target===modal) App.closeModal(); };
+};
+
+App._fillSubOfficer = function(){
+  const sel=document.getElementById('as-officer');
+  const opt=sel.options[sel.selectedIndex];
+};
+
+App.doAddSub = async function(){
+  const sel=document.getElementById('as-officer');
+  const opt=sel.options[sel.selectedIndex];
+  if(!opt.value){ document.getElementById('as-err').innerHTML='<div class="err shake">Please select an officer.</div>'; return; }
+  const cats={}; (App._adminCats||[]).forEach(c=>{ cats[c.key]=parseInt(document.getElementById('as-'+c.key)?.value||0); });
+  const body={
+    officer_name: opt.dataset.name, badge: opt.dataset.badge,
+    department: opt.dataset.dept,
+    shift_date: document.getElementById('as-date').value,
+    start_time: document.getElementById('as-start').value,
+    end_time: document.getElementById('as-end').value,
+    ot_hours: document.getElementById('as-ot').value,
+    mileage: document.getElementById('as-miles').value,
+    details: document.getElementById('as-details').value,
+    ...cats
+  };
+  const btn=document.getElementById('as-save'); btn.disabled=true; btn.innerHTML='Saving…';
+  const {ok,data}=await App.api('/api/admin/add_submission','POST',body);
+  if(!ok){ document.getElementById('as-err').innerHTML=`<div class="err shake">${data.error||'Failed.'}</div>`; btn.disabled=false; btn.textContent='Save Submission'; return; }
+  App.closeModal(); App.loadAdminSubs();
+};
+
+App.editSub = function(id){
+  const sub = (App._adminSubs||[]).find(s=>s.id===id); if(!sub) return;
+  const cats = App._adminCats||[];
+  const modal = document.createElement('div');
+  modal.className='modal-bg'; modal.id='editmodal';
+  modal.innerHTML = `
+    <div class="modal">
+      <div style="display:flex;align-items:center;margin-bottom:4px">
+        <h2 style="font-size:18px;font-weight:800">Edit Submission</h2>
+        <div style="flex:1"></div>
+        <span style="cursor:pointer;color:var(--m);font-size:20px" onclick="App.closeModal()">✕</span>
+      </div>
+      <p style="color:var(--m);font-size:12px;margin-bottom:8px">${sub.officer} #${sub.badge} • ${sub.date}</p>
+      <div class="row" style="margin-bottom:4px">
+        <div class="field"><label class="label">Shift Date</label><input class="input" id="e-date" value="${sub.date||''}"/></div>
+        <div class="field"><label class="label">Start</label><input class="input" id="e-start" value="${sub.start_time||''}"/></div>
+        <div class="field"><label class="label">End</label><input class="input" id="e-end" value="${sub.end_time||''}"/></div>
+        <div class="field" style="flex:0 0 70px"><label class="label">OT</label><input class="input" id="e-ot" value="${sub.ot_hours||''}"/></div>
+        <div class="field" style="flex:0 0 70px"><label class="label">Miles</label><input class="input" id="e-miles" value="${sub.mileage||''}"/></div>
+      </div>
+      <div class="editgrid">
+        ${cats.map(c=>`<div class="editrow"><span class="el">${c.label}</span><input type="number" min="0" id="e-${c.key}" value="${sub.cats[c.key]||0}"/></div>`).join('')}
+      </div>
+      <div class="field"><label class="label">Details</label><textarea class="input" id="e-details" rows="2">${sub.details||''}</textarea></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button class="btn outline small" onclick="App.closeModal()">Cancel</button>
+        <button class="btn accent small" id="e-save" onclick="App.saveSub(${id})">Save Changes</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.onclick=e=>{ if(e.target===modal) App.closeModal(); };
+};
+
+App.closeModal = function(){ const m=document.getElementById('editmodal'); if(m) m.remove(); };
+
+App.saveSub = async function(id){
+  const cats={}; (App._adminCats||[]).forEach(c=>{ cats[c.key]=parseInt(document.getElementById('e-'+c.key).value||0); });
+  const body={ id, cats,
+    shift_date:document.getElementById('e-date').value,
+    start_time:document.getElementById('e-start')?.value||'',
+    end_time:document.getElementById('e-end')?.value||'',
+    ot_hours:document.getElementById('e-ot').value,
+    mileage:document.getElementById('e-miles').value,
+    details:document.getElementById('e-details')?.value||'' };
+  const btn=document.getElementById('e-save'); btn.disabled=true; btn.innerHTML='Saving<span class="dots"><span></span><span></span><span></span></span>';
+  await App.api('/api/admin/update_submission','POST',body);
+  App.closeModal(); App.loadAdminSubs();
+};
+
+App.deleteSub = async function(id){
+  if(confirm('Delete this submission permanently? This affects leaderboard and reports.')){
+    await App.api('/api/admin/delete_submission','POST',{id}); App.loadAdminSubs();
+  }
+};
+
+App.loadAdminSettings = async function(){
+  const el=document.getElementById('admin-content'); if(!el) return;
+  const {data}=await App.api('/api/admin/settings');
+  const tog=(key,label,desc)=>`
+    <div style="display:flex;align-items:flex-start;gap:14px;padding:14px 0;border-bottom:1px solid var(--bd)">
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:600;margin-bottom:2px">${label}</div>
+        <div style="font-size:11px;color:var(--m)">${desc}</div>
+      </div>
+      <label style="position:relative;display:inline-block;width:42px;height:24px;flex-shrink:0;margin-top:2px">
+        <input type="checkbox" id="s-${key}" ${data[key]==='true'?'checked':''} style="opacity:0;width:0;height:0" onchange="App._settingChanged()">
+        <span style="position:absolute;cursor:pointer;inset:0;background:${data[key]==='true'?'var(--a)':'#333'};border-radius:12px;transition:.2s" id="s-${key}-track">
+          <span style="position:absolute;left:${data[key]==='true'?'20px':'2px'};top:2px;width:20px;height:20px;background:#fff;border-radius:50%;transition:.2s" id="s-${key}-knob"></span>
+        </span>
+      </label>
+    </div>`;
+  const txt=(key,label,desc,placeholder)=>`
+    <div style="padding:14px 0;border-bottom:1px solid var(--bd)">
+      <div style="font-size:13px;font-weight:600;margin-bottom:2px">${label}</div>
+      <div style="font-size:11px;color:var(--m);margin-bottom:8px">${desc}</div>
+      <input class="input" id="s-${key}" value="${(data[key]||'').replace(/"/g,'&quot;')}" placeholder="${placeholder||''}"/>
+    </div>`;
+  el.innerHTML=`
+    <div class="card" style="margin-bottom:16px">
+      <div style="font-size:12px;font-weight:700;color:var(--a);text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px">🏷️ Branding</div>
+      ${txt('app_name','App Name','The name shown in the browser tab and header.','ShiftLog')}
+      ${txt('department_name','Department Name','Shown in reports and the supervisor portal.','Blackfoot PD')}
+      ${txt('default_department','Default Department on Signup','Pre-fills the department field on the sign-up form.','Blackfoot PD')}
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div style="font-size:12px;font-weight:700;color:var(--a);text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px">🔐 Access Control</div>
+      ${tog('allow_signup','Allow Officer Self-Signup','When off, only admins can create accounts.')}
+      ${tog('require_email','Require Email on Signup','Officers must provide an email to register.')}
+      ${tog('leaderboard_visible','Show Leaderboard','Display the live leaderboard on the submission form.')}
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div style="font-size:12px;font-weight:700;color:var(--g);text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px">📢 Announcement Banner</div>
+      ${tog('announcement_active','Show Announcement Banner','Displays a pinned message to all officers on the form page.')}
+      <div style="padding:14px 0">
+        <div style="font-size:13px;font-weight:600;margin-bottom:2px">Announcement Message</div>
+        <div style="font-size:11px;color:var(--m);margin-bottom:8px">The message officers will see. Supports plain text.</div>
+        <textarea class="input" id="s-announcement_text" rows="2" placeholder="e.g. Task force briefing Tuesday at 6 PM in the main conference room.">${data.announcement_text||''}</textarea>
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div style="font-size:12px;font-weight:700;color:var(--am);text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px">🚧 Maintenance</div>
+      ${tog('maintenance_mode','Maintenance Mode','Prevents officer logins and shows a notice on the login page.')}
+      <div style="padding:14px 0">
+        <div style="font-size:13px;font-weight:600;margin-bottom:2px">Maintenance Message</div>
+        <div style="font-size:11px;color:var(--m);margin-bottom:8px">Displayed on the login page when maintenance mode is on.</div>
+        <textarea class="input" id="s-maintenance_message" rows="2">${data.maintenance_message||''}</textarea>
+      </div>
+    </div>
+    <div id="settings-msg"></div>
+    <button class="btn accent" id="settings-save" onclick="App.saveSettings()">Save Settings</button>`;
+
+  // Wire up toggle visual feedback
+  ['allow_signup','require_email','leaderboard_visible','maintenance_mode','announcement_active'].forEach(key=>{
+    const inp=document.getElementById('s-'+key);
+    const track=document.getElementById('s-'+key+'-track');
+    const knob=document.getElementById('s-'+key+'-knob');
+    if(!inp||!track||!knob) return;
+    inp.addEventListener('change',()=>{
+      track.style.background=inp.checked?'var(--a)':'#333';
+      knob.style.left=inp.checked?'20px':'2px';
+    });
+  });
+};
+
+App._settingChanged = function(){};
+
+App.saveSettings = async function(){
+  const gv=id=>(document.getElementById(id)||{}).value||'';
+  const gb=id=>(document.getElementById(id)||{}).checked;
+  const body={
+    app_name: gv('s-app_name'),
+    department_name: gv('s-department_name'),
+    default_department: gv('s-default_department'),
+    allow_signup: gb('s-allow_signup')?'true':'false',
+    require_email: gb('s-require_email')?'true':'false',
+    leaderboard_visible: gb('s-leaderboard_visible')?'true':'false',
+    maintenance_mode: gb('s-maintenance_mode')?'true':'false',
+    maintenance_message: gv('s-maintenance_message'),
+    announcement_active: gb('s-announcement_active')?'true':'false',
+    announcement_text: gv('s-announcement_text'),
+  };
+  const btn=document.getElementById('settings-save'); btn.disabled=true; btn.innerHTML='Saving…';
+  const {ok}=await App.api('/api/admin/settings','POST',body);
+  btn.disabled=false; btn.textContent='Save Settings';
+  const msg=document.getElementById('settings-msg');
+  if(ok){
+    Object.assign(App.settings, body);
+    msg.innerHTML='<div class="err" style="color:var(--g);background:rgba(34,197,94,.08);border-color:rgba(34,197,94,.2);margin-bottom:10px">✓ Settings saved successfully.</div>';
+    document.title = (body.app_name||'ShiftLog') + ' — HVE Reporting';
+  } else {
+    msg.innerHTML='<div class="err shake">Failed to save settings.</div>';
+  }
+  setTimeout(()=>{ if(msg) msg.innerHTML=''; },4000);
 };
 
 App.setRole = async function(id,role){ await App.api('/api/admin/set_role','POST',{user_id:id,role}); App.loadAdmin(); };
