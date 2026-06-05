@@ -59,13 +59,13 @@ a{color:var(--a);text-decoration:none}
 .tag{font-size:9px;font-weight:700;padding:3px 8px;border-radius:12px;text-transform:uppercase;letter-spacing:.4px}
 
 /* counter */
-.counter{display:flex;align-items:center;padding:7px 0;border-bottom:1px solid var(--bd)}
-.counter .cl{flex:1;font-size:13px;font-weight:500;color:var(--w2)}
-.stepper{display:flex;align-items:center;background:#141414;border-radius:10px;padding:2px 4px;transition:box-shadow .2s}
+.counter{display:flex;align-items:center;padding:10px 0;border-bottom:1px solid var(--bd)}
+.counter .cl{flex:1;font-size:14px;font-weight:500;color:var(--w2)}
+.stepper{display:flex;align-items:center;background:#141414;border-radius:12px;padding:3px 5px;transition:box-shadow .2s}
 .stepper.flash{box-shadow:0 0 12px rgba(59,130,246,.35)}
-.stepper button{width:40px;height:40px;background:transparent;border:none;color:var(--m);font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;border-radius:8px;transition:color .12s}
-.stepper button.minus:hover{color:var(--r)} .stepper button.plus:hover{color:var(--g)}
-.stepper .val{min-width:36px;text-align:center;font-size:16px;font-weight:700;transition:transform .15s,color .15s}
+.stepper button{width:52px;height:52px;background:transparent;border:none;color:var(--m);font-size:24px;cursor:pointer;display:flex;align-items:center;justify-content:center;border-radius:10px;transition:color .12s, background .12s}
+.stepper button.minus:hover,.stepper button.minus:active{color:var(--r);background:rgba(239,68,68,.1)} .stepper button.plus:hover,.stepper button.plus:active{color:var(--g);background:rgba(34,197,94,.1)}
+.stepper .val{min-width:44px;text-align:center;font-size:20px;font-weight:700;transition:transform .15s,color .15s}
 .spotlight{background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.2);border-radius:10px;padding:6px 12px;margin-bottom:10px}
 
 /* stat tiles */
@@ -139,7 +139,18 @@ canvas.confetti{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:n
 .editrow input:focus{border-color:var(--a)}
 .subrow{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--bd);flex-wrap:wrap}
 
-/* announcement banner */
+/* accordion */
+.acc-card{background:var(--card);border:1px solid var(--bd);border-radius:12px;overflow:hidden;transition:border-color .2s}
+.acc-card-open{border-color:rgba(59,130,246,.3)}
+.acc-header{width:100%;display:flex;align-items:center;gap:10px;padding:13px 16px;background:transparent;border:none;color:var(--w);cursor:pointer;text-align:left;transition:background .15s}
+.acc-header:hover{background:rgba(255,255,255,.03)}
+.acc-title{flex:1;font-size:12px;font-weight:700;color:var(--w2);text-transform:uppercase;letter-spacing:.5px}
+.acc-badge{background:var(--a);color:#fff;font-size:10px;font-weight:800;min-width:20px;height:20px;border-radius:10px;padding:0 6px;display:inline-flex;align-items:center;justify-content:center}
+.acc-chevron{font-size:11px;color:var(--m);flex-shrink:0;transition:transform .2s}
+.acc-body{display:none;padding:0 4px 8px;border-top:1px solid var(--bd)}
+.acc-body.open{display:block;animation:fadeIn .18s both}
+
+
 .announce{display:flex;align-items:flex-start;gap:10px;padding:12px 16px;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.3);border-radius:10px;margin-bottom:16px;animation:fadeIn .3s both}
 .announce .a-icon{font-size:18px;flex-shrink:0;margin-top:1px}
 .announce .a-text{flex:1;font-size:13px;line-height:1.5;color:var(--w2)}
@@ -412,8 +423,9 @@ App.page_form = function(v){
   if(!this.user){ this.go('login'); return; }
   this.form = {};
   const u = this.user;
+
   const counterRow = (key,icon,label)=>`
-    <div class="counter">
+    <div class="counter" id="crow-${key}">
       <span class="cl"><span style="display:inline-block;width:22px;text-align:center;margin-right:6px">${icon||''}</span>${label}</span>
       <div class="stepper" id="st-${key}">
         <button class="minus" onclick="App.bump('${key}',-1)">−</button>
@@ -421,16 +433,41 @@ App.page_form = function(v){
         <button class="plus" onclick="App.bump('${key}',1)">+</button>
       </div>
     </div>`;
-  const groupHTML = CAT_GROUPS.map(g=>{
-    if(g.spotlight){
-      const [k,icon,label]=g.items[0];
-      return `<div class="card" style="margin-bottom:14px"><div class="spotlight">${counterRow(k,icon,label)}</div></div>`;
-    }
-    return `<div class="card" style="margin-bottom:14px">
-      <div class="label" style="margin-bottom:8px;font-size:11px;color:var(--w2)">${g.title}</div>
-      ${g.items.map(([k,icon,label])=>counterRow(k,icon,label)).join('')}
+
+  // Spotlight (Total Contacts) — always visible
+  const [spotKey, spotIcon, spotLabel] = CAT_GROUPS[0].items[0];
+  const spotHTML = `<div class="card" style="margin-bottom:14px">
+    <div class="spotlight">${counterRow(spotKey, spotIcon, spotLabel)}</div>
+  </div>`;
+
+  // Collapsible groups for everything else
+  const accordionHTML = CAT_GROUPS.slice(1).map((g, gi)=>{
+    const groupId = 'acc-'+gi;
+    const items = g.items.map(([k,icon,label])=>counterRow(k,icon,label)).join('');
+    return `<div class="acc-card" id="${groupId}-card" style="margin-bottom:8px">
+      <button class="acc-header" onclick="App.toggleAcc('${groupId}')" id="${groupId}-btn">
+        <span class="acc-title">${g.title}</span>
+        <span class="acc-badge" id="${groupId}-badge" style="display:none"></span>
+        <span class="acc-chevron" id="${groupId}-chev">▸</span>
+      </button>
+      <div class="acc-body" id="${groupId}-body">
+        ${items}
+      </div>
     </div>`;
   }).join('');
+
+  // Media as its own accordion
+  const mediaHTML = `<div class="acc-card" id="acc-media-card" style="margin-bottom:8px">
+    <button class="acc-header" onclick="App.toggleAcc('acc-media')" id="acc-media-btn">
+      <span class="acc-title">📣 Media Outreach</span>
+      <span class="acc-badge" id="acc-media-badge" style="display:none"></span>
+      <span class="acc-chevron" id="acc-media-chev">▸</span>
+    </button>
+    <div class="acc-body" id="acc-media-body">
+      ${MEDIA.map(([k,icon,l])=>counterRow(k,icon,l)).join('')}
+    </div>
+  </div>`;
+
   v.innerHTML = `
     <div style="display:flex;gap:20px;align-items:flex-start;max-width:880px;margin:0 auto;flex-wrap:wrap">
       <div style="flex:1;min-width:280px">
@@ -454,12 +491,15 @@ App.page_form = function(v){
           </div>
           <div id="dup-warn" style="display:none;margin-top:8px"></div>
         </div>
-        ${groupHTML}
-        <div class="card" style="margin-bottom:14px">
-          <div class="label" style="margin-bottom:10px">📣 Media Outreach</div>
-          ${MEDIA.map(([k,icon,l])=>counterRow(k,icon,l)).join('')}
+
+        ${spotHTML}
+
+        <div id="acc-groups">
+          ${accordionHTML}
+          ${mediaHTML}
         </div>
-        <div class="card" style="margin-bottom:14px">
+
+        <div class="card" style="margin-bottom:14px;margin-top:6px">
           <label class="label">📝 Details & Comments</label>
           <textarea class="input" id="f-details" rows="3" placeholder="Notes about the shift..." style="margin-top:6px"></textarea>
         </div>
@@ -470,6 +510,14 @@ App.page_form = function(v){
       </div>
       <div class="lb" id="lb"><div class="muted" style="font-size:11px">Loading leaders…</div></div>
     </div>`;
+
+  // Map each group index to its keys for badge counting
+  App._accGroups = CAT_GROUPS.slice(1).map((g, gi) => ({
+    id: 'acc-'+gi,
+    keys: g.items.map(([k])=>k)
+  }));
+  App._accGroups.push({ id: 'acc-media', keys: MEDIA.map(([k])=>k) });
+
   CATS.concat(MEDIA.map(m=>[m[0],m[2]])).forEach(([k])=> this.form[k]=0);
   this.loadLeaderboard();
   this.loadAnnouncementBanner();
@@ -485,6 +533,33 @@ App.bump = function(key,delta){
   // total = sum of activity cats only
   let t=0; CATS.forEach(([k])=> t+=this.form[k]||0);
   const tot=document.getElementById('f-total'); tot.textContent=t; tot.style.color=t>0?'var(--a)':'var(--m)';
+  // update accordion group badge
+  this.updateAccBadges();
+};
+
+App.toggleAcc = function(id){
+  const body = document.getElementById(id+'-body');
+  const chev = document.getElementById(id+'-chev');
+  const card = document.getElementById(id+'-card');
+  if(!body) return;
+  const open = body.classList.toggle('open');
+  if(chev) chev.textContent = open ? '▾' : '▸';
+  if(card) card.classList.toggle('acc-card-open', open);
+};
+
+App.updateAccBadges = function(){
+  (App._accGroups||[]).forEach(({id, keys})=>{
+    const badge = document.getElementById(id+'-badge');
+    if(!badge) return;
+    const count = keys.filter(k=>(App.form[k]||0)>0).length;
+    const total = keys.reduce((a,k)=>a+(App.form[k]||0),0);
+    if(count>0){
+      badge.style.display='inline-flex';
+      badge.textContent = total;
+    } else {
+      badge.style.display='none';
+    }
+  });
 };
 
 App.loadLeaderboard = async function(){
