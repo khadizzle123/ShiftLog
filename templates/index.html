@@ -510,6 +510,7 @@ App.page_form = function(v){
             <div class="field"><label class="label">Date</label><input class="input" id="f-date" type="date" onchange="App.checkDuplicate(this.value)"/></div>
             <div class="field"><label class="label">Start Time</label><input class="input" id="f-start" placeholder="e.g. 6:00 PM"/></div>
             <div class="field"><label class="label">End Time</label><input class="input" id="f-end" placeholder="e.g. 2:00 AM"/></div>
+            <div class="field" style="flex:0 0 72px"><label class="label">Reg Hrs</label><input class="input" id="f-hours" type="number" step="0.25" min="0" placeholder="0"/></div>
             <div class="field" style="flex:0 0 56px"><label class="label">OT</label><input class="input" id="f-ot" placeholder="0"/></div>
             <div class="field" style="flex:0 0 64px"><label class="label">Miles</label><input class="input" id="f-miles" placeholder="0"/></div>
           </div>
@@ -746,6 +747,7 @@ App.loadHistory = async function(){
           <div style="text-align:center"><div style="font-size:17px;font-weight:800;color:var(--a)">${tc}</div><div style="font-size:8px;color:var(--m);text-transform:uppercase">contacts</div></div>
           <div style="text-align:center"><div style="font-size:17px;font-weight:800;color:#8b5cf6">${citations}</div><div style="font-size:8px;color:var(--m);text-transform:uppercase">citations</div></div>
           <div style="text-align:center"><div style="font-size:17px;font-weight:800;color:var(--r)">${arrests}</div><div style="font-size:8px;color:var(--m);text-transform:uppercase">arrests</div></div>
+          ${sub.hours_worked?`<div style="text-align:center"><div style="font-size:17px;font-weight:800;color:var(--a)">${sub.hours_worked}</div><div style="font-size:8px;color:var(--m);text-transform:uppercase">reg hrs</div></div>`:''}
           ${sub.ot_hours?`<div style="text-align:center"><div style="font-size:17px;font-weight:800;color:var(--g)">${sub.ot_hours}</div><div style="font-size:8px;color:var(--m);text-transform:uppercase">OT hrs</div></div>`:''}
           ${sub.mileage?`<div style="text-align:center"><div style="font-size:17px;font-weight:800">${sub.mileage}</div><div style="font-size:8px;color:var(--m);text-transform:uppercase">miles</div></div>`:''}
         </div>
@@ -780,6 +782,7 @@ App.submitForm = async function(){
   const payload = {
     name:this.user.name, badge:this.user.badge,
     date:g('f-date'), start_time:g('f-start'), end_time:g('f-end'),
+    hours_worked:g('f-hours'),
     ot_hours:g('f-ot'), mileage:g('f-miles'), details:g('f-details'),
     ...this.form
   };
@@ -1484,6 +1487,7 @@ App.showAddSubModal = async function(){
     <div class="row" style="margin-bottom:0">
       <div class="field"><label class="label">Start Time</label><input class="input" id="as-start" placeholder="e.g. 6:00 PM"/></div>
       <div class="field"><label class="label">End Time</label><input class="input" id="as-end" placeholder="e.g. 2:00 AM"/></div>
+      <div class="field" style="flex:0 0 70px"><label class="label">Reg Hrs</label><input class="input" id="as-hours" type="number" step="0.25" placeholder="0"/></div>
       <div class="field" style="flex:0 0 70px"><label class="label">OT Hrs</label><input class="input" id="as-ot" placeholder="0"/></div>
       <div class="field" style="flex:0 0 70px"><label class="label">Miles</label><input class="input" id="as-miles" placeholder="0"/></div>
     </div>
@@ -1517,6 +1521,7 @@ App.doAddSub = async function(){
     shift_date: document.getElementById('as-date').value,
     start_time: document.getElementById('as-start').value,
     end_time: document.getElementById('as-end').value,
+    hours_worked: document.getElementById('as-hours').value,
     ot_hours: document.getElementById('as-ot').value,
     mileage: document.getElementById('as-miles').value,
     details: document.getElementById('as-details').value,
@@ -1545,6 +1550,7 @@ App.editSub = function(id){
         <div class="field"><label class="label">Shift Date</label><input class="input" id="e-date" value="${sub.date||''}"/></div>
         <div class="field"><label class="label">Start</label><input class="input" id="e-start" value="${sub.start_time||''}"/></div>
         <div class="field"><label class="label">End</label><input class="input" id="e-end" value="${sub.end_time||''}"/></div>
+        <div class="field"><label class="label">Reg Hrs</label><input class="input" id="e-hours" value="${sub.hours_worked||''}"/></div>
         <div class="field" style="flex:0 0 70px"><label class="label">OT</label><input class="input" id="e-ot" value="${sub.ot_hours||''}"/></div>
         <div class="field" style="flex:0 0 70px"><label class="label">Miles</label><input class="input" id="e-miles" value="${sub.mileage||''}"/></div>
       </div>
@@ -1569,6 +1575,7 @@ App.saveSub = async function(id){
     shift_date:document.getElementById('e-date').value,
     start_time:document.getElementById('e-start')?.value||'',
     end_time:document.getElementById('e-end')?.value||'',
+    hours_worked:document.getElementById('e-hours')?.value||'',
     ot_hours:document.getElementById('e-ot').value,
     mileage:document.getElementById('e-miles').value,
     details:document.getElementById('e-details')?.value||'' };

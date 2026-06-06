@@ -83,6 +83,7 @@ class Submission(Base):
     start_time = Column(String(40))
     end_time = Column(String(40))
     ot_hours = Column(String(20))
+    hours_worked = Column(String(20))
     mileage = Column(String(20))
     details = Column(Text)
     data_json = Column(Text)
@@ -255,6 +256,7 @@ def submit():
             user_id=u.id, officer_name=u.name, badge=u.badge, department=u.department,
             shift_date=d.get('date') or '', start_time=d.get('start_time') or '',
             end_time=d.get('end_time') or '', ot_hours=str(d.get('ot_hours') or ''),
+            hours_worked=str(d.get('hours_worked') or ''),
             mileage=str(d.get('mileage') or ''), details=d.get('details') or '',
             data_json=json.dumps(cats), source='form')
         s.add(sub); s.commit()
@@ -478,6 +480,7 @@ def my_submissions():
                 'id': sub.id,
                 'date': sub.shift_date or sub.created_at.strftime('%m/%d/%Y'),
                 'start_time': sub.start_time, 'end_time': sub.end_time,
+                'hours_worked': sub.hours_worked,
                 'ot_hours': sub.ot_hours, 'mileage': sub.mileage,
                 'details': sub.details, 'cats': cats,
                 'created': sub.created_at.strftime('%m/%d/%Y %I:%M %p'),
@@ -565,6 +568,7 @@ def admin_update_submission():
             sub.data_json = json.dumps({k: int(d['cats'].get(k, 0) or 0) for k in CAT_KEYS})
         if 'shift_date' in d:  sub.shift_date  = d['shift_date']
         if 'ot_hours'   in d:  sub.ot_hours    = d['ot_hours']
+        if 'hours_worked' in d: sub.hours_worked = d['hours_worked']
         if 'mileage'    in d:  sub.mileage     = d['mileage']
         if 'details'    in d:  sub.details     = d['details']
         if 'start_time' in d:  sub.start_time  = d['start_time']
@@ -613,6 +617,7 @@ def admin_add_submission():
             start_time=d.get('start_time') or '',
             end_time=d.get('end_time') or '',
             ot_hours=str(d.get('ot_hours') or ''),
+            hours_worked=str(d.get('hours_worked') or ''),
             mileage=str(d.get('mileage') or ''),
             details=d.get('details') or '',
             data_json=json.dumps(cats),
@@ -879,7 +884,7 @@ def grant_stats(gid):
             if uid not in per_officer: continue
             po = per_officer[uid]
             po['reports'] += 1
-            reg = _parse_hours(sub.start_time, sub.end_time)
+            reg = float(sub.hours_worked or 0) if (sub.hours_worked and sub.hours_worked.strip()) else _parse_hours(sub.start_time, sub.end_time)
             ot  = float(sub.ot_hours or 0)
             po['reg_hours'] += reg
             po['ot_hours']  += ot
@@ -1004,7 +1009,7 @@ def grant_pdf(gid):
         if uid not in per_officer: continue
         po = per_officer[uid]
         po['reports'] += 1
-        po['reg_hours'] += _parse_hours(sub.start_time, sub.end_time)
+        po["reg_hours"] += float(sub.hours_worked or 0) if (sub.hours_worked and sub.hours_worked.strip()) else _parse_hours(sub.start_time, sub.end_time)
         po['ot_hours']  += float(sub.ot_hours or 0)
         try: cats = json.loads(sub.data_json)
         except Exception: cats = {}
