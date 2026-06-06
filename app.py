@@ -26,27 +26,38 @@ SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
 
 CATEGORIES = [
-    ('total_contacts', 'Total Contacts'),
-    ('seat_belt', 'Seat Belt Citations'),
-    ('child_safety_seat', 'Child Safety Seat'),
-    ('speeding', 'Speeding Citations'),
-    ('texting', 'Texting Citations'),
-    ('suspended_licenses', 'Suspended Licenses'),
-    ('uninsured_motorists', 'Uninsured Motorists'),
-    ('dui_alcohol', 'DUI - Alcohol'),
-    ('dui_drugs', 'DUI - Drugs'),
-    ('dui_drugs_alcohol', 'DUI - Drugs & Alcohol'),
-    ('underage_alcohol', 'Underage Alcohol'),
-    ('reckless_driving', 'Reckless Driving'),
-    ('inattentive_driving', 'Inattentive Driving'),
-    ('felony_arrests', 'Felony Arrests'),
-    ('recovered_stolen', 'Recovered Stolen'),
-    ('fugitives', 'Fugitives'),
-    ('motorcycle_endorsement', 'Motorcycle'),
-    ('bicycle_pedestrian', 'Bicycle/Pedestrian'),
-    ('other_activity', 'Other'),
+    ('total_contacts',       'Total Contacts'),
+    ('seat_belt',            'Seat Belt Citations'),
+    ('child_safety_seat',    'Child Safety Seat'),
+    ('speeding',             'Speeding Citations'),
+    ('texting',              'Texting Citations'),
+    ('suspended_licenses',   'Suspended Licenses'),
+    ('uninsured_motorists',  'Uninsured Motorists'),
+    ('dui_alcohol',          'DUI - Alcohol'),
+    ('dui_drugs',            'DUI - Drugs'),
+    ('dui_drugs_alcohol',    'DUI - Drugs & Alcohol'),
+    ('underage_alcohol',     'Underage Alcohol'),
+    ('reckless_driving',     'Reckless Driving'),
+    ('inattentive_driving',  'Inattentive Driving'),
+    ('felony_arrests',       'Felony Arrests'),
+    ('recovered_stolen',     'Recovered Stolen'),
+    ('fugitives',            'Fugitives'),
+    ('motorcycle_endorsement','Motorcycle'),
+    ('bicycle_pedestrian',   'Bicycle/Pedestrian'),
+    ('other_activity',       'Other'),
+    # Other Contacts
+    ('assist_officer',       'Assist Other Officer'),
+    ('calls_for_service',    'Calls for Service'),
+    ('field_interview',      'Field Interview (FI)'),
 ]
 CAT_KEYS = [k for k, _ in CATEGORIES]
+
+# Keys that count as citations for citations-per-hour
+CITATION_KEYS = [
+    'seat_belt','child_safety_seat','speeding','texting','suspended_licenses',
+    'uninsured_motorists','reckless_driving','inattentive_driving',
+    'dui_alcohol','dui_drugs','dui_drugs_alcohol',
+]
 
 
 class User(Base):
@@ -83,6 +94,32 @@ class Setting(Base):
     __tablename__ = 'settings'
     key = Column(String(80), primary_key=True)
     value = Column(Text, default='')
+
+
+
+class Grant(Base):
+    __tablename__ = 'grants'
+    id           = Column(Integer, primary_key=True)
+    name         = Column(String(200), nullable=False)
+    agency       = Column(String(200))
+    amount       = Column(String(40))
+    start_date   = Column(String(20))
+    end_date     = Column(String(20))
+    created_at   = Column(DateTime, default=datetime.utcnow)
+
+
+class GrantOfficer(Base):
+    __tablename__ = 'grant_officers'
+    id       = Column(Integer, primary_key=True)
+    grant_id = Column(Integer, ForeignKey('grants.id'))
+    user_id  = Column(Integer, ForeignKey('users.id'))
+
+
+class OfficerWage(Base):
+    __tablename__ = 'officer_wages'
+    id      = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'), unique=True)
+    wage    = Column(String(20))
 
 
 Base.metadata.create_all(engine)
@@ -643,6 +680,554 @@ def admin_save_settings():
         s.close()
 
 
+# ── Time parsing helper ───────────────────────────────────────────────────────
+
+def _parse_hours(start_str, end_str):
+    """Parse start/end time strings into decimal hours. Returns 0 on failure."""
+    import re
+    def to_minutes(s):
+        s = (s or '').strip().upper()
+        # try H:MM AM/PM
+        m = re.match(r'^(\d{1,2}):(\d{2})\s*(AM|PM)?$', s)
+        if m:
+            h, mi, period = int(m.group(1)), int(m.group(2)), m.group(3)
+            if period == 'PM' and h != 12: h += 12
+            if period == 'AM' and h == 12: h = 0
+            return h * 60 + mi
+        # try H AM/PM
+        m = re.match(r'^(\d{1,2})\s*(AM|PM)$', s)
+        if m:
+            h, period = int(m.group(1)), m.group(2)
+            if period == 'PM' and h != 12: h += 12
+            if period == 'AM' and h == 12: h = 0
+            return h * 60
+        return None
+    s_min = to_minutes(start_str)
+    e_min = to_minutes(end_str)
+    if s_min is None or e_min is None:
+        return 0.0
+    diff = e_min - s_min
+    if diff <= 0:
+        diff += 24 * 60   # overnight shift
+    return round(diff / 60, 2)
+
+
+# ── Officer Wages ─────────────────────────────────────────────────────────────
+
+@app.route('/api/wages')
+@role_required('supervisor', 'admin')
+def get_wages():
+    s = db()
+    try:
+        users = s.query(User).filter(User.role.in_(['officer','supervisor','admin'])).all()
+        wages = {w.user_id: w.wage for w in s.query(OfficerWage).all()}
+        out = []
+        for u in users:
+            out.append({'user_id': u.id, 'name': u.name, 'badge': u.badge,
+                        'department': u.department, 'role': u.role,
+                        'wage': wages.get(u.id, '')})
+        return jsonify({'wages': out})
+    finally:
+        s.close()
+
+
+@app.route('/api/wages', methods=['POST'])
+@role_required('supervisor', 'admin')
+def set_wage():
+    d = request.json or {}
+    s = db()
+    try:
+        user_id = d.get('user_id')
+        wage_val = str(d.get('wage') or '').strip()
+        row = s.query(OfficerWage).filter_by(user_id=user_id).first()
+        if row:
+            row.wage = wage_val
+        else:
+            s.add(OfficerWage(user_id=user_id, wage=wage_val))
+        s.commit()
+        return jsonify({'ok': True})
+    finally:
+        s.close()
+
+
+# ── Grants ────────────────────────────────────────────────────────────────────
+
+def _grant_dict(g, officers=None):
+    return {'id': g.id, 'name': g.name, 'agency': g.agency or '',
+            'amount': g.amount or '0', 'start_date': g.start_date or '',
+            'end_date': g.end_date or '',
+            'created': g.created_at.strftime('%m/%d/%Y') if g.created_at else '',
+            'officer_ids': officers or []}
+
+
+@app.route('/api/grants')
+@role_required('supervisor', 'admin')
+def list_grants():
+    s = db()
+    try:
+        grants = s.query(Grant).order_by(Grant.created_at.desc()).all()
+        out = []
+        for g in grants:
+            oids = [go.user_id for go in s.query(GrantOfficer).filter_by(grant_id=g.id).all()]
+            out.append(_grant_dict(g, oids))
+        return jsonify({'grants': out})
+    finally:
+        s.close()
+
+
+@app.route('/api/grants', methods=['POST'])
+@role_required('supervisor', 'admin')
+def create_grant():
+    d = request.json or {}
+    s = db()
+    try:
+        g = Grant(name=(d.get('name') or '').strip(),
+                  agency=(d.get('agency') or '').strip(),
+                  amount=str(d.get('amount') or '0'),
+                  start_date=d.get('start_date') or '',
+                  end_date=d.get('end_date') or '')
+        s.add(g); s.flush()
+        for uid in (d.get('officer_ids') or []):
+            s.add(GrantOfficer(grant_id=g.id, user_id=uid))
+        s.commit()
+        oids = [go.user_id for go in s.query(GrantOfficer).filter_by(grant_id=g.id).all()]
+        return jsonify({'ok': True, 'grant': _grant_dict(g, oids)})
+    finally:
+        s.close()
+
+
+@app.route('/api/grants/<int:gid>', methods=['POST'])
+@role_required('supervisor', 'admin')
+def update_grant(gid):
+    d = request.json or {}
+    s = db()
+    try:
+        g = s.query(Grant).get(gid)
+        if not g: return jsonify({'error': 'not found'}), 404
+        if 'name'       in d: g.name       = d['name']
+        if 'agency'     in d: g.agency     = d['agency']
+        if 'amount'     in d: g.amount     = str(d['amount'])
+        if 'start_date' in d: g.start_date = d['start_date']
+        if 'end_date'   in d: g.end_date   = d['end_date']
+        if 'officer_ids' in d:
+            s.query(GrantOfficer).filter_by(grant_id=gid).delete()
+            for uid in d['officer_ids']:
+                s.add(GrantOfficer(grant_id=gid, user_id=uid))
+        s.commit()
+        oids = [go.user_id for go in s.query(GrantOfficer).filter_by(grant_id=gid).all()]
+        return jsonify({'ok': True, 'grant': _grant_dict(g, oids)})
+    finally:
+        s.close()
+
+
+@app.route('/api/grants/<int:gid>', methods=['DELETE'])
+@role_required('supervisor', 'admin')
+def delete_grant(gid):
+    s = db()
+    try:
+        s.query(GrantOfficer).filter_by(grant_id=gid).delete()
+        g = s.query(Grant).get(gid)
+        if g: s.delete(g)
+        s.commit()
+        return jsonify({'ok': True})
+    finally:
+        s.close()
+
+
+@app.route('/api/grants/<int:gid>/stats')
+@role_required('supervisor', 'admin')
+def grant_stats(gid):
+    s = db()
+    try:
+        g = s.query(Grant).get(gid)
+        if not g: return jsonify({'error': 'not found'}), 404
+        officer_ids = [go.user_id for go in s.query(GrantOfficer).filter_by(grant_id=gid).all()]
+        wages_map = {w.user_id: float(w.wage or 0) for w in
+                     s.query(OfficerWage).filter(OfficerWage.user_id.in_(officer_ids)).all()}
+        users_map = {u.id: u for u in s.query(User).filter(User.id.in_(officer_ids)).all()}
+
+        # Fetch submissions in grant date range for assigned officers
+        subs = s.query(Submission).filter(Submission.user_id.in_(officer_ids)).all()
+        # filter by shift_date within grant range
+        def in_range(sub):
+            sd = sub.shift_date or ''
+            if not sd: return False
+            try:
+                dt = datetime.strptime(sd, '%Y-%m-%d')
+            except Exception:
+                try: dt = datetime.strptime(sd, '%m/%d/%Y')
+                except Exception: return False
+            s_dt = datetime.strptime(g.start_date, '%Y-%m-%d') if g.start_date else None
+            e_dt = datetime.strptime(g.end_date, '%Y-%m-%d').replace(hour=23,minute=59) if g.end_date else None
+            if s_dt and dt < s_dt: return False
+            if e_dt and dt > e_dt: return False
+            return True
+
+        per_officer = {}
+        for uid in officer_ids:
+            u = users_map.get(uid)
+            if not u: continue
+            per_officer[uid] = {
+                'name': u.name, 'badge': u.badge, 'wage': wages_map.get(uid, 0),
+                'reg_hours': 0.0, 'ot_hours': 0.0, 'reports': 0, 'citations': 0,
+                'cats': {k: 0 for k in CAT_KEYS}
+            }
+
+        for sub in subs:
+            if not in_range(sub): continue
+            uid = sub.user_id
+            if uid not in per_officer: continue
+            po = per_officer[uid]
+            po['reports'] += 1
+            reg = _parse_hours(sub.start_time, sub.end_time)
+            ot  = float(sub.ot_hours or 0)
+            po['reg_hours'] += reg
+            po['ot_hours']  += ot
+            try: cats = json.loads(sub.data_json)
+            except Exception: cats = {}
+            for k in CAT_KEYS:
+                po['cats'][k] += int(cats.get(k, 0) or 0)
+            po['citations'] += sum(int(cats.get(k, 0) or 0) for k in CITATION_KEYS)
+
+        # Build summary
+        total_cost = 0.0
+        officers_out = []
+        for uid, po in per_officer.items():
+            wage = po['wage']
+            total_hours = po['reg_hours'] + po['ot_hours']
+            reg_pay     = wage * po['reg_hours']
+            ot_pay      = wage * 1.5 * po['ot_hours']
+            benefits    = wage * 0.05 * total_hours
+            officer_total = reg_pay + ot_pay + benefits
+            total_cost += officer_total
+            cph = round(po['citations'] / total_hours, 2) if total_hours > 0 else 0
+            officers_out.append({
+                'user_id': uid, 'name': po['name'], 'badge': po['badge'],
+                'wage': wage, 'reg_hours': round(po['reg_hours'], 2),
+                'ot_hours': round(po['ot_hours'], 2),
+                'total_hours': round(total_hours, 2),
+                'reports': po['reports'],
+                'citations': po['citations'],
+                'citations_per_hour': cph,
+                'reg_pay': round(reg_pay, 2),
+                'ot_pay': round(ot_pay, 2),
+                'benefits': round(benefits, 2),
+                'total': round(officer_total, 2),
+                'cats': po['cats'],
+            })
+
+        grant_amount = float(g.amount or 0)
+        remaining    = grant_amount - total_cost
+        pct_used     = round((total_cost / grant_amount * 100), 1) if grant_amount > 0 else 0
+
+        # totals across all officers
+        total_reg_pay  = sum(o['reg_pay']  for o in officers_out)
+        total_ot_pay   = sum(o['ot_pay']   for o in officers_out)
+        total_benefits = sum(o['benefits'] for o in officers_out)
+        total_hours    = sum(o['total_hours'] for o in officers_out)
+        total_reports  = sum(o['reports']  for o in officers_out)
+        total_citations= sum(o['citations'] for o in officers_out)
+        total_cph      = round(total_citations / total_hours, 2) if total_hours > 0 else 0
+        total_contacts = sum(o['cats'].get('total_contacts', 0) for o in officers_out)
+
+        return jsonify({
+            'grant': _grant_dict(g, list(per_officer.keys())),
+            'officers': officers_out,
+            'summary': {
+                'total_cost': round(total_cost, 2),
+                'grant_amount': grant_amount,
+                'remaining': round(remaining, 2),
+                'pct_used': pct_used,
+                'reg_pay': round(total_reg_pay, 2),
+                'ot_pay': round(total_ot_pay, 2),
+                'benefits': round(total_benefits, 2),
+                'total_hours': round(total_hours, 2),
+                'total_reports': total_reports,
+                'total_citations': total_citations,
+                'citations_per_hour': total_cph,
+                'total_contacts': total_contacts,
+            }
+        })
+    finally:
+        s.close()
+
+
+@app.route('/api/grants/<int:gid>/pdf')
+@role_required('supervisor', 'admin')
+def grant_pdf(gid):
+    """Generate the professional grant expenditure PDF using ReportLab."""
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib import colors as rl_colors
+    from reportlab.lib.units import inch
+    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
+                                     TableStyle, HRFlowable)
+    from reportlab.lib.styles import getSampleStyleSheet
+
+    # ── Fetch stats inline ──
+    s_db = db()
+    try:
+        g_obj = s_db.query(Grant).get(gid)
+        if not g_obj:
+            return jsonify({'error': 'not found'}), 404
+        officer_ids = [go.user_id for go in s_db.query(GrantOfficer).filter_by(grant_id=gid).all()]
+        wages_map = {w.user_id: float(w.wage or 0) for w in
+                     s_db.query(OfficerWage).filter(OfficerWage.user_id.in_(officer_ids)).all()}
+        users_map = {u.id: u for u in s_db.query(User).filter(User.id.in_(officer_ids)).all()}
+        subs_all  = s_db.query(Submission).filter(Submission.user_id.in_(officer_ids)).all()
+        dept_name = get_setting(s_db, 'department_name', 'Blackfoot Police Department')
+    finally:
+        s_db.close()
+
+    def in_range(sub):
+        sd = sub.shift_date or ''
+        if not sd: return False
+        try:    dt = datetime.strptime(sd, '%Y-%m-%d')
+        except Exception:
+            try:    dt = datetime.strptime(sd, '%m/%d/%Y')
+            except Exception: return False
+        s_dt = datetime.strptime(g_obj.start_date, '%Y-%m-%d') if g_obj.start_date else None
+        e_dt = datetime.strptime(g_obj.end_date, '%Y-%m-%d').replace(hour=23, minute=59) if g_obj.end_date else None
+        if s_dt and dt < s_dt: return False
+        if e_dt and dt > e_dt: return False
+        return True
+
+    per_officer = {}
+    for uid in officer_ids:
+        u = users_map.get(uid)
+        if not u: continue
+        per_officer[uid] = {'name': u.name, 'badge': u.badge, 'wage': wages_map.get(uid, 0),
+                             'reg_hours': 0.0, 'ot_hours': 0.0, 'reports': 0,
+                             'citations': 0, 'cats': {k: 0 for k in CAT_KEYS}}
+    for sub in subs_all:
+        if not in_range(sub): continue
+        uid = sub.user_id
+        if uid not in per_officer: continue
+        po = per_officer[uid]
+        po['reports'] += 1
+        po['reg_hours'] += _parse_hours(sub.start_time, sub.end_time)
+        po['ot_hours']  += float(sub.ot_hours or 0)
+        try: cats = json.loads(sub.data_json)
+        except Exception: cats = {}
+        for k in CAT_KEYS: po['cats'][k] += int(cats.get(k, 0) or 0)
+        po['citations'] += sum(int(cats.get(k, 0) or 0) for k in CITATION_KEYS)
+
+    officers_out = []
+    total_cost = 0.0
+    for uid, po in per_officer.items():
+        wage = po['wage']
+        th   = po['reg_hours'] + po['ot_hours']
+        rp   = wage * po['reg_hours']
+        op   = wage * 1.5 * po['ot_hours']
+        bp   = wage * 0.05 * th
+        tot  = rp + op + bp
+        total_cost += tot
+        cph = round(po['citations'] / th, 2) if th > 0 else 0
+        officers_out.append({'name': po['name'], 'badge': po['badge'], 'wage': wage,
+                              'reg_hours': round(po['reg_hours'], 2), 'ot_hours': round(po['ot_hours'], 2),
+                              'total_hours': round(th, 2), 'reports': po['reports'],
+                              'citations': po['citations'], 'citations_per_hour': cph,
+                              'reg_pay': round(rp, 2), 'ot_pay': round(op, 2),
+                              'benefits': round(bp, 2), 'total': round(tot, 2), 'cats': po['cats']})
+
+    grant_amount = float(g_obj.amount or 0)
+    remaining    = grant_amount - total_cost
+    pct_used     = round(total_cost / grant_amount * 100, 1) if grant_amount > 0 else 0
+    total_hours  = sum(o['total_hours']  for o in officers_out)
+    total_reports= sum(o['reports']      for o in officers_out)
+    total_cit    = sum(o['citations']    for o in officers_out)
+    total_cph    = round(total_cit / total_hours, 2) if total_hours > 0 else 0
+    total_contacts = sum(o['cats'].get('total_contacts', 0) for o in officers_out)
+    total_dui    = sum(sum(o['cats'].get(k, 0) for k in ['dui_alcohol','dui_drugs','dui_drugs_alcohol'])
+                       for o in officers_out)
+
+    sort_by = request.args.get('sort', 'name')
+    if sort_by == 'cost':   officers_out.sort(key=lambda x: x['total'], reverse=True)
+    elif sort_by == 'hours': officers_out.sort(key=lambda x: x['total_hours'], reverse=True)
+    else:                    officers_out.sort(key=lambda x: x['name'])
+
+    # ── Build PDF ──
+    out_buf = io.BytesIO()
+    doc = SimpleDocTemplate(out_buf, pagesize=letter,
+                            leftMargin=0.65*inch, rightMargin=0.65*inch,
+                            topMargin=0.5*inch, bottomMargin=0.6*inch)
+    styles   = getSampleStyleSheet()
+    navy     = rl_colors.HexColor('#1e3a5f')
+    dgray    = rl_colors.HexColor('#374151')
+    lgray    = rl_colors.HexColor('#f3f4f6')
+    mgray    = rl_colors.HexColor('#9ca3af')
+    gold_c   = rl_colors.HexColor('#b45309')
+    white_c  = rl_colors.white
+    fmt      = lambda v: f"${float(v):,.2f}"
+    fmth     = lambda v: f"{float(v):.1f}h"
+
+    story = []
+
+    # Header
+    hdr = [[
+        Paragraph(f"<font size=7 color='#9ca3af'>REPORT NO.</font><br/><font size=11><b><font color='#1e3a5f'>GR-{gid:04d}</font></b></font>", styles['Normal']),
+        Paragraph(f"<para align=center><font size=7 color='#9ca3af'>— {dept_name.upper()} —</font><br/><font size=17><b>{g_obj.name}</b></font><br/><font size=8 color='#4b5563'>Traffic Safety Grant Expenditure Report</font></para>", styles['Normal']),
+        Paragraph(f"<para align=right><font size=7 color='#9ca3af'>GENERATED</font><br/><font size=10><b><font color='#1e3a5f'>{datetime.now().strftime('%B %d, %Y')}</font></b></font></para>", styles['Normal']),
+    ]]
+    ht = Table(hdr, colWidths=[1.1*inch, 4.8*inch, 1.3*inch])
+    ht.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'MIDDLE'),('TOPPADDING',(0,0),(-1,-1),6),('BOTTOMPADDING',(0,0),(-1,-1),6)]))
+    story.append(ht)
+    story.append(HRFlowable(width='100%', thickness=3, color=navy, spaceAfter=6))
+
+    # Info bar
+    status_str = 'Active' if (not g_obj.end_date or g_obj.end_date >= datetime.now().strftime('%Y-%m-%d')) else 'Closed'
+    def ic(label, value):
+        return Paragraph(f"<font size=7 color='#9ca3af'>{label.upper()}</font><br/><font size=10><b>{value}</b></font>", styles['Normal'])
+    info = [[ic('Issuing Agency', g_obj.agency or '—'),
+             ic('Grant Period', f"{g_obj.start_date or '—'} – {g_obj.end_date or '—'}"),
+             ic('Total Issued', fmt(grant_amount)),
+             ic('Officers', str(len(officers_out))),
+             ic('Status', status_str)]]
+    it = Table(info, colWidths=[1.5*inch, 1.8*inch, 1.2*inch, 0.7*inch, 1.0*inch])
+    it.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,-1),lgray),('BOX',(0,0),(-1,-1),.5,mgray),
+                             ('INNERGRID',(0,0),(-1,-1),.5,rl_colors.HexColor('#e5e7eb')),
+                             ('VALIGN',(0,0),(-1,-1),'MIDDLE'),('TOPPADDING',(0,0),(-1,-1),8),
+                             ('BOTTOMPADDING',(0,0),(-1,-1),8),('LEFTPADDING',(0,0),(-1,-1),10)]))
+    story.append(it); story.append(Spacer(1,10))
+
+    # Financial Summary
+    story.append(Paragraph('<b><font size=10 color="#1e3a5f">FINANCIAL SUMMARY</font></b>', styles['Normal']))
+    story.append(HRFlowable(width='100%', thickness=1.5, color=navy, spaceBefore=3, spaceAfter=6))
+
+    def p8(t): return Paragraph(f'<font size=8>{t}</font>', styles['Normal'])
+    def p8g(t): return Paragraph(f'<font size=8 color="#6b7280">{t}</font>', styles['Normal'])
+    def p8b(t): return Paragraph(f'<font size=8><b>{t}</b></font>', styles['Normal'])
+    def pw(t):  return Paragraph(f'<font size=8 color="white"><b>{t}</b></font>', styles['Normal'])
+    def sh(t):  return [Paragraph(f'<font size=8 color="#374151"><b>{t}</b></font>', styles['Normal']),'','','','']
+
+    fin_rows = [[pw('Cost Category'), pw('Description'), pw('Hours'), pw('Rate'), pw('Amount')]]
+    fin_rows.append(sh('Regular Compensation'))
+    for o in officers_out:
+        fin_rows.append([p8(f'Regular Pay — {o["name"]}'), p8g(f'{fmth(o["reg_hours"])} × ${o["wage"]:.2f}/hr'),
+                         p8(fmth(o["reg_hours"])), p8(f'${o["wage"]:.2f}'), p8(fmt(o["reg_pay"]))])
+    fin_rows.append(['','',p8g(''),p8b('Subtotal'),p8b(fmt(sum(o["reg_pay"] for o in officers_out)))])
+    fin_rows.append(sh('Overtime Compensation (1.5×)'))
+    for o in officers_out:
+        fin_rows.append([p8(f'Overtime Pay — {o["name"]}'), p8g(f'{fmth(o["ot_hours"])} × ${o["wage"]:.2f} × 1.5'),
+                         p8(fmth(o["ot_hours"])), p8(f'${o["wage"]*1.5:.2f}'), p8(fmt(o["ot_pay"]))])
+    fin_rows.append(['','','',p8b('Subtotal'),p8b(fmt(sum(o["ot_pay"] for o in officers_out)))])
+    fin_rows.append(sh('Benefits (5% of Total Hours × Base Wage)'))
+    for o in officers_out:
+        fin_rows.append([p8(f'Benefits — {o["name"]}'), p8g(f'{fmth(o["total_hours"])} × ${o["wage"]:.2f} × 0.05'),
+                         p8(fmth(o["total_hours"])), p8(f'${o["wage"]*0.05:.4f}'), p8(fmt(o["benefits"]))])
+    fin_rows.append(['','','',p8b('Subtotal'),p8b(fmt(sum(o["benefits"] for o in officers_out)))])
+    fin_rows.append([pw('TOTAL GRANT EXPENDITURE'),'','','',
+                     Paragraph(f'<font size=10 color="#fbbf24"><b>{fmt(total_cost)}</b></font>', styles['Normal'])])
+
+    nr = len(fin_rows)
+    fs = [('BACKGROUND',(0,0),(-1,0),navy),('GRID',(0,0),(-1,-1),.4,rl_colors.HexColor('#d1d5db')),
+          ('VALIGN',(0,0),(-1,-1),'MIDDLE'),('TOPPADDING',(0,0),(-1,-1),4),('BOTTOMPADDING',(0,0),(-1,-1),4),
+          ('LEFTPADDING',(0,0),(-1,-1),6),('BACKGROUND',(0,nr-1),(-1,nr-1),navy),
+          ('SPAN',(0,nr-1),(3,nr-1)),('ALIGN',(2,0),(4,-1),'RIGHT')]
+    n_off = len(officers_out)
+    for ri in [1, n_off+3, n_off*2+5]:
+        if ri < nr:
+            fs += [('BACKGROUND',(0,ri),(-1,ri),lgray),('SPAN',(0,ri),(-1,ri))]
+    for ri in [n_off+2, n_off*2+4, n_off*3+6]:
+        if ri < nr-1:
+            fs.append(('BACKGROUND',(0,ri),(-1,ri),rl_colors.HexColor('#e5e7eb')))
+    ft = Table(fin_rows, colWidths=[2.0*inch,2.1*inch,0.7*inch,1.0*inch,1.3*inch])
+    ft.setStyle(TableStyle(fs)); story.append(ft); story.append(Spacer(1,10))
+
+    # Per-officer breakdown
+    story.append(Paragraph('<b><font size=10 color="#1e3a5f">PER-OFFICER EXPENDITURE DETAIL</font></b>', styles['Normal']))
+    story.append(HRFlowable(width='100%', thickness=1.5, color=navy, spaceBefore=3, spaceAfter=6))
+    for o in officers_out:
+        oh = [[Paragraph(f'<font size=9 color="white"><b>{o["name"]}</b>  <font size=8>#{o["badge"]} · ${o["wage"]:.2f}/hr</font></font>', styles['Normal']),
+               Paragraph(f'<font size=10 color="#fbbf24"><b>{fmt(o["total"])}</b></font>', styles['Normal'])]]
+        oht = Table(oh, colWidths=[5.5*inch,1.7*inch])
+        oht.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,-1),dgray),('ALIGN',(1,0),(1,0),'RIGHT'),
+                                  ('VALIGN',(0,0),(-1,-1),'MIDDLE'),('TOPPADDING',(0,0),(-1,-1),5),
+                                  ('BOTTOMPADDING',(0,0),(-1,-1),5),('LEFTPADDING',(0,0),(0,0),10),
+                                  ('RIGHTPADDING',(1,0),(1,0),10)]))
+        story.append(oht)
+        sr = [[Paragraph(f'<para align=center><font size=12><b>{fmth(o["reg_hours"])}</b></font><br/><font size=7 color="#9ca3af">REG HRS</font></para>', styles['Normal']),
+               Paragraph(f'<para align=center><font size=12><b>{fmth(o["ot_hours"])}</b></font><br/><font size=7 color="#9ca3af">OT HRS</font></para>', styles['Normal']),
+               Paragraph(f'<para align=center><font size=12><b>{fmth(o["total_hours"])}</b></font><br/><font size=7 color="#9ca3af">TOTAL HRS</font></para>', styles['Normal']),
+               Paragraph(f'<para align=center><font size=12><b>{o["reports"]}</b></font><br/><font size=7 color="#9ca3af">REPORTS</font></para>', styles['Normal']),
+               Paragraph(f'<para align=center><font size=12><b>{o["citations"]}</b></font><br/><font size=7 color="#9ca3af">CITATIONS</font></para>', styles['Normal']),
+               Paragraph(f'<para align=center><font size=12><b>{o["citations_per_hour"]}</b></font><br/><font size=7 color="#9ca3af">CIT/HR</font></para>', styles['Normal'])]]
+        srt = Table(sr, colWidths=[1.2*inch]*6)
+        srt.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,-1),lgray),('INNERGRID',(0,0),(-1,-1),.4,rl_colors.HexColor('#e5e7eb')),
+                                  ('BOX',(0,0),(-1,-1),.4,rl_colors.HexColor('#d1d5db')),('ALIGN',(0,0),(-1,-1),'CENTER'),
+                                  ('VALIGN',(0,0),(-1,-1),'MIDDLE'),('TOPPADDING',(0,0),(-1,-1),5),('BOTTOMPADDING',(0,0),(-1,-1),5)]))
+        story.append(srt)
+        dd = [[p8g('Regular Pay'),p8g(f'{fmth(o["reg_hours"])} × ${o["wage"]:.2f}'),p8(fmt(o["reg_pay"]))],
+              [p8g('Overtime Pay'),p8g(f'{fmth(o["ot_hours"])} × ${o["wage"]:.2f} × 1.5'),p8(fmt(o["ot_pay"]))],
+              [p8g('Benefits'),p8g(f'{fmth(o["total_hours"])} × ${o["wage"]:.2f} × 0.05'),p8(fmt(o["benefits"]))],
+              [p8b('Officer Total'),'',p8b(fmt(o["total"]))]]
+        ddt = Table(dd, colWidths=[1.5*inch,4.2*inch,1.5*inch])
+        ddt.setStyle(TableStyle([('BOX',(0,0),(-1,-1),.4,rl_colors.HexColor('#d1d5db')),
+                                  ('LINEBELOW',(0,0),(-1,-2),.4,rl_colors.HexColor('#e5e7eb')),
+                                  ('BACKGROUND',(0,3),(-1,3),lgray),('ALIGN',(2,0),(2,-1),'RIGHT'),
+                                  ('VALIGN',(0,0),(-1,-1),'MIDDLE'),('TOPPADDING',(0,0),(-1,-1),4),
+                                  ('BOTTOMPADDING',(0,0),(-1,-1),4),('LEFTPADDING',(0,0),(-1,-1),8),
+                                  ('RIGHTPADDING',(2,0),(2,-1),8)]))
+        story.append(ddt); story.append(Spacer(1,7))
+
+    # Activity table
+    story.append(Paragraph('<b><font size=10 color="#1e3a5f">TASK FORCE ACTIVITY SUMMARY</font></b>', styles['Normal']))
+    story.append(HRFlowable(width='100%', thickness=1.5, color=navy, spaceBefore=3, spaceAfter=6))
+    act_hdr = [pw(h) for h in ['Officer','Shifts','Contacts','Citations','DUI','Felony','Hours','Cit/Hr']]
+    act_rows = [act_hdr]
+    for i, o in enumerate(officers_out):
+        dui = sum(o['cats'].get(k,0) for k in ['dui_alcohol','dui_drugs','dui_drugs_alcohol'])
+        row = [p8(f'{o["name"]}, #{o["badge"]}'),p8(str(o["reports"])),p8(str(o["cats"].get("total_contacts",0))),
+               p8(str(o["citations"])),p8(str(dui)),p8(str(o["cats"].get("felony_arrests",0))),
+               p8(fmth(o["total_hours"])),p8(str(o["citations_per_hour"]))]
+        act_rows.append(row)
+    act_rows.append([pw('TOTALS'),pw(str(total_reports)),pw(str(total_contacts)),pw(str(total_cit)),
+                     pw(str(total_dui)),pw(str(sum(o["cats"].get("felony_arrests",0) for o in officers_out))),
+                     pw(fmth(total_hours)),pw(str(total_cph))])
+    atbl = Table(act_rows, colWidths=[1.6*inch,.5*inch,.7*inch,.7*inch,.5*inch,.55*inch,.65*inch,.5*inch])
+    ast = [('BACKGROUND',(0,0),(-1,0),dgray),('BACKGROUND',(0,len(act_rows)-1),(-1,len(act_rows)-1),navy),
+           ('GRID',(0,0),(-1,-1),.4,rl_colors.HexColor('#d1d5db')),('ALIGN',(1,0),(-1,-1),'CENTER'),
+           ('VALIGN',(0,0),(-1,-1),'MIDDLE'),('TOPPADDING',(0,0),(-1,-1),5),('BOTTOMPADDING',(0,0),(-1,-1),5),
+           ('LEFTPADDING',(0,0),(-1,-1),5)]
+    for i in range(1,len(act_rows)-1):
+        if i%2==0: ast.append(('BACKGROUND',(0,i),(-1,i),lgray))
+    atbl.setStyle(TableStyle(ast)); story.append(atbl)
+    story.append(Paragraph(f'<font size=7 color="#9ca3af">* Citations include traffic violations and DUI. Period: {g_obj.start_date} – {g_obj.end_date}.</font>', styles['Normal']))
+    story.append(Spacer(1,10))
+
+    # Signature
+    story.append(HRFlowable(width='100%', thickness=1, color=rl_colors.HexColor('#d1d5db'), spaceAfter=5))
+    story.append(Paragraph('<b><font size=10 color="#1e3a5f">CERTIFICATION &amp; SIGNATURES</font></b>', styles['Normal']))
+    story.append(Spacer(1,4))
+    story.append(Paragraph('<font size=8 color="#374151">I certify that the information contained in this report is true and accurate to the best of my knowledge, and that all expenditures were incurred in furtherance of the approved grant activities during the stated grant period.</font>', styles['Normal']))
+    story.append(Spacer(1,14))
+    sig_data = [[Paragraph('<font size=8 color="#9ca3af">SUPERVISOR SIGNATURE</font><br/><br/><br/>', styles['Normal']),
+                 Paragraph('<font size=8 color="#9ca3af">DATE SUBMITTED</font><br/><br/><br/>', styles['Normal']),
+                 Paragraph('<font size=8 color="#9ca3af">AGENCY APPROVAL</font><br/><br/><br/>', styles['Normal'])]]
+    sigt = Table(sig_data, colWidths=[2.4*inch,2.0*inch,2.8*inch])
+    sigt.setStyle(TableStyle([('LINEABOVE',(0,0),(-1,0),1.5,rl_colors.HexColor('#1e293b')),('TOPPADDING',(0,0),(-1,-1),5)]))
+    story.append(sigt)
+
+    def on_page(canv, doc_obj):
+        canv.saveState()
+        W, H = letter
+        canv.setFillColor(navy)
+        canv.rect(0, 0, W, 0.4*inch, fill=1, stroke=0)
+        canv.setFillColor(white_c)
+        canv.setFont('Helvetica-Bold', 7)
+        canv.drawString(0.65*inch, 0.15*inch,
+            f'ShiftLog  ·  {dept_name}  ·  Confidential — For Official Use Only')
+        canv.drawRightString(W-0.65*inch, 0.15*inch,
+            f'Report GR-{gid:04d}  ·  {datetime.now().strftime("%B %d, %Y")}  ·  Page {doc_obj.page}')
+        canv.restoreState()
+
+    doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
+    out_buf.seek(0)
+    safe_name = (g_obj.name or 'grant').replace(' ', '_')[:40]
+    return send_file(out_buf, as_attachment=True,
+                     download_name=f"Grant_Report_{safe_name}.pdf",
+                     mimetype='application/pdf')
+
+
 def _find_template():
     for name in ('template.pdf', 'Tracking_Forms.pdf'):
         p = os.path.join(BASE_DIR, name)
@@ -728,6 +1313,18 @@ def build_overlay(data):
 def generate_pdf():
     data = request.json or {}
     try:
+        # Append Other Contacts to details for PDF
+        other_parts = []
+        if int(data.get('assist_officer') or 0):
+            other_parts.append(f"Assist Officer: {data['assist_officer']}")
+        if int(data.get('calls_for_service') or 0):
+            other_parts.append(f"Calls for Service: {data['calls_for_service']}")
+        if int(data.get('field_interview') or 0):
+            other_parts.append(f"FI: {data['field_interview']}")
+        if other_parts:
+            existing = (data.get('details') or '').strip()
+            data = dict(data)
+            data['details'] = (existing + (' | ' if existing else '') + ' | '.join(other_parts))
         overlay = PdfReader(build_overlay(data))
         reader = PdfReader(TEMPLATE_PDF)
         writer = PdfWriter()

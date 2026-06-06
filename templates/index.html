@@ -167,6 +167,24 @@ canvas.confetti{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:n
 .hist-expand.open{display:grid}
 .hist-cat{font-size:11px;color:var(--m);display:flex;justify-content:space-between}
 .hist-cat span:last-child{color:var(--w2);font-weight:600}
+
+/* grants dashboard */
+.grant-card-dash{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:18px;margin-bottom:12px;transition:border-color .2s,box-shadow .2s}
+.grant-card-dash:hover{border-color:rgba(59,130,246,.35);box-shadow:0 0 18px rgba(59,130,246,.07)}
+.grant-prog-track{height:8px;background:#1a1a1a;border-radius:4px;overflow:hidden;margin:10px 0 4px}
+.grant-prog-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--a),#6366f1);transition:width .8s cubic-bezier(.16,1,.3,1)}
+.grant-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:12px}
+.grant-tile{background:#0a0a0a;border:1px solid var(--bd);border-radius:10px;padding:11px 13px;text-align:center}
+.grant-tile .gtv{font-size:15px;font-weight:800;margin-bottom:2px}
+.grant-tile .gtl{font-size:8px;color:var(--m);text-transform:uppercase;letter-spacing:.5px}
+.grant-pill{padding:3px 9px;border-radius:20px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px}
+.grant-pill.active{background:rgba(34,197,94,.15);color:var(--g);border:1px solid rgba(34,197,94,.25)}
+.grant-pill.closed{background:rgba(100,116,139,.1);color:var(--m);border:1px solid var(--bd)}
+.off-cost-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--bd);flex-wrap:wrap}
+.cph-badge{display:inline-flex;align-items:center;gap:4px;background:rgba(139,92,246,.12);border:1px solid rgba(139,92,246,.25);border-radius:8px;padding:3px 8px;font-size:10px;font-weight:700;color:#a78bfa}
+.wage-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--bd);flex-wrap:wrap}
+.chip{padding:6px 12px;border-radius:20px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid var(--bd);background:#141414;color:var(--m);transition:.15s;user-select:none}
+.chip.selected{background:rgba(59,130,246,.15);border-color:var(--a);color:var(--a)}
 </style>
 </head>
 <body>
@@ -210,6 +228,11 @@ const CAT_GROUPS = [
     ['motorcycle_endorsement','🏍️','Motorcycle Endorsement'],
     ['bicycle_pedestrian','🚲','Bicycle / Pedestrian'],
     ['other_activity','📋','Other Activity']
+  ]},
+  {title:'📞 Other Contacts', items:[
+    ['assist_officer','🤝','Assist Other Officer'],
+    ['calls_for_service','📟','Calls for Service'],
+    ['field_interview','🗣️','Field Interview (FI)']
   ]},
 ];
 // Flat list (key -> label) for totals, init, and lookups
@@ -275,6 +298,7 @@ const App = {
       links.push(['form','Form']);
       links.push(['history','My History']);
       if(['admin','supervisor'].includes(this.user.role)) links.push(['supervisor','Supervisor']);
+      if(['admin','supervisor'].includes(this.user.role)) links.push(['grants','Grants']);
       if(this.user.role==='admin') links.push(['admin','Admin']);
     }
     let html = links.map(([id,label])=>
@@ -810,6 +834,277 @@ App.downloadPDF = async function(){
     document.getElementById('dl-msg').innerHTML='<p style="color:var(--g);font-size:12px;margin-top:14px;font-weight:600">🎉 HVE report saved!</p>';
     App.confetti();
   }catch(e){ btn.disabled=false; btn.textContent='⬇ Download PDF'; document.getElementById('dl-msg').innerHTML='<div class="err">Download failed. Try again.</div>'; }
+};
+
+// ===================== GRANTS DASHBOARD =====================
+
+App.page_grants = function(v){
+  if(!this.user||!['admin','supervisor'].includes(this.user.role)){ this.go('form'); return; }
+  this.grantTab = this.grantTab || 'overview';
+  v.innerHTML=`<div class="container">
+    <h1 class="h1">Grant Dashboard</h1>
+    <p class="sub">Track state traffic grants, officer costs, and expenditures.</p>
+    <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap">
+      <button class="nav-btn ${this.grantTab==='overview'?'active':''}" onclick="App.setGrantTab('overview')">📊 Overview</button>
+      <button class="nav-btn ${this.grantTab==='wages'?'active':''}" onclick="App.setGrantTab('wages')">💰 Officer Wages</button>
+      <button class="nav-btn ${this.grantTab==='new'?'active':''}" onclick="App.setGrantTab('new')">＋ New Grant</button>
+    </div>
+    <div id="grants-content"><div class="muted" style="font-size:12px">Loading…</div></div>
+  </div>`;
+  if(this.grantTab==='overview') App.loadGrantsOverview();
+  else if(this.grantTab==='wages') App.loadWages();
+  else App.renderNewGrantForm();
+};
+
+App.setGrantTab = function(tab){ App.grantTab=tab; App.go('grants'); };
+
+// ─── Overview ───
+App.loadGrantsOverview = async function(){
+  const el=document.getElementById('grants-content'); if(!el) return;
+  const {data}=await App.api('/api/grants');
+  const grants=data.grants||[];
+  if(!grants.length){
+    el.innerHTML=`<div class="card"><p style="font-size:13px;color:var(--m)">No grants yet. Click <strong>＋ New Grant</strong> to create one.</p></div>`;
+    return;
+  }
+  const today=new Date().toISOString().slice(0,10);
+  let html='';
+  for(const g of grants){
+    const active = (!g.end_date||g.end_date>=today);
+    html+=`<div class="grant-card-dash">
+      <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
+        <div style="flex:1">
+          <div style="font-size:10px;color:var(--m);margin-bottom:2px">${g.agency||'Grant'}</div>
+          <div style="font-size:16px;font-weight:800">${g.name}</div>
+          <div style="font-size:10px;color:var(--m);margin-top:2px">${g.start_date||'—'} – ${g.end_date||'—'} &nbsp;·&nbsp; ${g.officer_ids.length} officers</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span class="grant-pill ${active?'active':'closed'}">${active?'● Active':'Closed'}</span>
+          <button class="btn outline small" onclick="App.openGrant(${g.id})">View Details</button>
+          <span style="font-size:13px;color:#555;cursor:pointer;padding:6px" title="Delete grant" onclick="App.deleteGrant(${g.id},'${(g.name||'').replace(/'/g,'')}')">🗑</span>
+        </div>
+      </div>
+      <div id="grant-summary-${g.id}"><div style="font-size:11px;color:var(--m);margin-top:10px">Loading financials…</div></div>
+    </div>`;
+  }
+  el.innerHTML=html;
+  // load stats for each grant
+  for(const g of grants) App.loadGrantSummaryCard(g.id);
+};
+
+App.loadGrantSummaryCard = async function(gid){
+  const el=document.getElementById('grant-summary-'+gid); if(!el) return;
+  const {ok,data}=await App.api(`/api/grants/${gid}/stats`);
+  if(!ok){ el.innerHTML=''; return; }
+  const s=data.summary;
+  const amt=parseFloat(s.grant_amount)||0;
+  const spent=parseFloat(s.total_cost)||0;
+  const pct=amt>0?Math.min(100,(spent/amt*100)):0;
+  const rem=amt-spent;
+  el.innerHTML=`
+    <div class="grant-prog-track"><div class="grant-prog-fill" style="width:${pct.toFixed(1)}%"></div></div>
+    <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--m);margin-bottom:8px">
+      <span>$${spent.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})} spent</span>
+      <span style="color:var(--w);font-weight:700">${pct.toFixed(1)}% of $${amt.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+      <span>$${rem.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})} remaining</span>
+    </div>
+    <div class="grant-tiles">
+      <div class="grant-tile"><div class="gtv" style="color:var(--a)">$${s.reg_pay.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div><div class="gtl">Regular Pay</div></div>
+      <div class="grant-tile"><div class="gtv" style="color:var(--am)">$${s.ot_pay.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div><div class="gtl">OT Pay (1.5×)</div></div>
+      <div class="grant-tile"><div class="gtv" style="color:#a78bfa">$${s.benefits.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div><div class="gtl">Benefits (5%)</div></div>
+      <div class="grant-tile"><div class="gtv">${s.total_hours}h</div><div class="gtl">Total Hours</div></div>
+      <div class="grant-tile"><div class="gtv">${s.total_reports}</div><div class="gtl">Reports</div></div>
+      <div class="grant-tile"><div class="gtv" style="color:#a78bfa">${s.citations_per_hour}</div><div class="gtl">Cit/Hr</div></div>
+    </div>`;
+};
+
+App.openGrant = async function(gid){
+  const el=document.getElementById('grants-content');
+  el.innerHTML='<div class="muted" style="font-size:12px">Loading grant detail…</div>';
+  const {ok,data}=await App.api(`/api/grants/${gid}/stats`);
+  if(!ok){ el.innerHTML='<div class="err">Failed to load grant.</div>'; return; }
+  const g=data.grant, s=data.summary, officers=data.officers;
+  const today=new Date().toISOString().slice(0,10);
+  const active=(!g.end_date||g.end_date>=today);
+  const amt=parseFloat(s.grant_amount)||0;
+  const pct=amt>0?Math.min(100,(s.total_cost/amt*100)):0;
+  const fmt=v=>'$'+parseFloat(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+
+  let offHtml = officers.map(o=>`
+    <div class="off-cost-row">
+      <div class="avatar" style="width:34px;height:34px;font-size:13px">${(o.name||'?')[0]}</div>
+      <div style="flex:1;min-width:100px">
+        <div style="font-size:13px;font-weight:700">${o.name} <span style="color:var(--m);font-weight:400">#${o.badge}</span></div>
+        <div style="font-size:10px;color:var(--m)">$${parseFloat(o.wage||0).toFixed(2)}/hr &nbsp;·&nbsp; ${o.reg_hours}h reg + ${o.ot_hours}h OT &nbsp;·&nbsp; ${o.reports} reports</div>
+      </div>
+      <span class="cph-badge">⚡ ${o.citations_per_hour} cit/hr</span>
+      <div style="text-align:right">
+        <div style="font-size:14px;font-weight:800;color:var(--a)">${fmt(o.total)}</div>
+        <div style="font-size:9px;color:var(--m)">${fmt(o.reg_pay)} reg + ${fmt(o.ot_pay)} OT + ${fmt(o.benefits)} ben</div>
+      </div>
+    </div>`).join('');
+
+  el.innerHTML=`
+    <button class="btn outline small" style="margin-bottom:14px" onclick="App.setGrantTab('overview')">← All Grants</button>
+    <div class="card" style="margin-bottom:14px">
+      <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+        <div style="flex:1">
+          <div style="font-size:10px;color:var(--m)">${g.agency||'Grant'}</div>
+          <div style="font-size:20px;font-weight:800;margin-top:2px">${g.name}</div>
+          <div style="font-size:11px;color:var(--m);margin-top:4px">${g.start_date||'—'} – ${g.end_date||'—'} &nbsp;·&nbsp; ${officers.length} officers assigned</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <span class="grant-pill ${active?'active':'closed'}">${active?'● Active':'Closed'}</span>
+          <button class="btn outline small" onclick="App.showManageOfficers(${gid}, ${JSON.stringify(g.officer_ids)})">👥 Manage Officers</button>
+          <button class="btn accent small" onclick="App.downloadGrantPDF(${gid})">⬇ PDF Report</button>
+          <span style="font-size:13px;color:#555;cursor:pointer;padding:6px" title="Delete grant" onclick="App.deleteGrant(${gid},'${(g.name||'').replace(/'/g,'')}')">🗑</span>
+        </div>
+      </div>
+      <div class="grant-prog-track"><div class="grant-prog-fill" style="width:${pct.toFixed(1)}%"></div></div>
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--m);margin-bottom:12px">
+        <span>${fmt(s.total_cost)} spent</span>
+        <span style="color:var(--w);font-weight:700">${pct.toFixed(1)}% of ${fmt(s.grant_amount)}</span>
+        <span>${fmt(s.remaining)} remaining</span>
+      </div>
+      <div class="tiles" style="margin-bottom:0">
+        <div class="tile glow"><div class="tv" style="color:var(--a)">${fmt(s.total_cost)}</div><div class="tl">Total Spent</div></div>
+        <div class="tile"><div class="tv" style="color:var(--g)">${fmt(s.remaining)}</div><div class="tl">Remaining</div></div>
+        <div class="tile"><div class="tv" style="color:var(--am)">${fmt(s.ot_pay)}</div><div class="tl">OT Pay</div></div>
+        <div class="tile"><div class="tv" style="color:#a78bfa">${fmt(s.benefits)}</div><div class="tl">Benefits</div></div>
+        <div class="tile"><div class="tv">${s.total_hours}h</div><div class="tl">Hours</div></div>
+        <div class="tile"><div class="tv" style="color:#a78bfa">${s.citations_per_hour}</div><div class="tl">Cit/Hr</div></div>
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:14px">
+      <div style="font-size:11px;font-weight:700;color:var(--a);text-transform:uppercase;letter-spacing:.6px;margin-bottom:12px">Per-Officer Breakdown</div>
+      ${offHtml||'<div class="muted" style="font-size:12px">No officers assigned or no submissions in this date range.</div>'}
+    </div>`;
+};
+
+App.deleteGrant = async function(gid, name){
+  if(!confirm(`Delete grant "${name}" and all its data? This cannot be undone.`)) return;
+  const {ok}=await App.api(`/api/grants/${gid}`,'DELETE');
+  if(ok){ App.grantTab='overview'; App.go('grants'); }
+  else alert('Failed to delete grant.');
+};
+
+App.downloadGrantPDF = async function(gid){
+  const btn = event.target;
+  btn.disabled=true; btn.textContent='Generating…';
+  try{
+    const r=await fetch(`/api/grants/${gid}/pdf`);
+    if(!r.ok){ const j=await r.json(); throw new Error(j.error||'Failed'); }
+    const blob=await r.blob();
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=url; a.download=`Grant_Report_${gid}.pdf`;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    btn.disabled=false; btn.textContent='⬇ PDF Report';
+    App.confetti();
+  }catch(e){ btn.disabled=false; btn.textContent='⬇ PDF Report'; alert('PDF generation failed: '+e.message); }
+};
+
+App.showManageOfficers = async function(gid, currentIds){
+  const {data}=await App.api('/api/wages');
+  const officers=(data.wages||[]);
+  const modal=document.createElement('div'); modal.className='modal-bg'; modal.id='editmodal';
+  modal.innerHTML=`<div class="modal">
+    <div style="display:flex;align-items:center;margin-bottom:14px">
+      <h2 style="font-size:18px;font-weight:800">Manage Officers</h2>
+      <div style="flex:1"></div>
+      <span style="cursor:pointer;color:var(--m);font-size:20px" onclick="App.closeModal()">✕</span>
+    </div>
+    <p style="font-size:12px;color:var(--m);margin-bottom:14px">Select officers assigned to this grant. Their submissions within the grant date range will count toward expenditures.</p>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px" id="officer-chips-modal">
+      ${officers.map(o=>`<div class="chip ${currentIds.includes(o.user_id)?'selected':''}" onclick="this.classList.toggle('selected')" data-uid="${o.user_id}">${o.name} #${o.badge}</div>`).join('')}
+    </div>
+    <div id="mo-err"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn outline small" onclick="App.closeModal()">Cancel</button>
+      <button class="btn accent small" onclick="App.saveGrantOfficers(${gid})">Save Officers</button>
+    </div>
+  </div>`;
+  document.body.appendChild(modal);
+  modal.onclick=e=>{ if(e.target===modal) App.closeModal(); };
+};
+
+App.saveGrantOfficers = async function(gid){
+  const chips=[...document.querySelectorAll('#officer-chips-modal .chip.selected')];
+  const ids=chips.map(c=>parseInt(c.dataset.uid));
+  const {ok}=await App.api(`/api/grants/${gid}`,'POST',{officer_ids:ids});
+  if(ok){ App.closeModal(); App.openGrant(gid); }
+  else document.getElementById('mo-err').innerHTML='<div class="err shake">Failed to save.</div>';
+};
+
+// ─── Wages ───
+App.loadWages = async function(){
+  const el=document.getElementById('grants-content'); if(!el) return;
+  const {data}=await App.api('/api/wages');
+  const wages=data.wages||[];
+  el.innerHTML=`<div class="card">
+    <div style="font-size:11px;font-weight:700;color:var(--a);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">💰 Officer Hourly Wages</div>
+    <p style="font-size:12px;color:var(--m);margin-bottom:16px">Set each officer's hourly base wage. Used to calculate grant expenditures automatically.</p>
+    ${wages.map(o=>`<div class="wage-row">
+      <div class="avatar">${(o.name||'?')[0]}</div>
+      <div style="flex:1"><div style="font-size:13px;font-weight:600">${o.name}</div><div style="font-size:10px;color:var(--m)">#${o.badge} · ${o.role}</div></div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:11px;color:var(--m)">$/hr</span>
+        <input class="input" style="width:100px;text-align:center;font-size:13px;font-weight:700;padding:8px 10px" type="number" step="0.01" min="0" id="wage-${o.user_id}" value="${o.wage||''}" placeholder="0.00"/>
+        <button class="btn outline small" onclick="App.saveWage(${o.user_id})">Save</button>
+      </div>
+    </div>`).join('')}
+  </div>`;
+};
+
+App.saveWage = async function(uid){
+  const inp=document.getElementById('wage-'+uid);
+  const wage=inp?inp.value.trim():'';
+  const {ok}=await App.api('/api/wages','POST',{user_id:uid, wage});
+  if(ok){ inp.style.borderColor='var(--g)'; setTimeout(()=>inp.style.borderColor='',2000); }
+};
+
+// ─── New Grant Form ───
+App.renderNewGrantForm = async function(){
+  const el=document.getElementById('grants-content'); if(!el) return;
+  const {data}=await App.api('/api/wages');
+  const officers=(data.wages||[]);
+  el.innerHTML=`<div class="card" style="max-width:620px">
+    <div style="font-size:11px;font-weight:700;color:var(--a);text-transform:uppercase;letter-spacing:.6px;margin-bottom:16px">Create New Grant</div>
+    <div class="row" style="margin-bottom:0">
+      <div class="field" style="flex:2"><label class="label">Grant Name</label><input class="input" id="ng-name" placeholder="e.g. IDOT HVE Task Force 2025"/></div>
+      <div class="field"><label class="label">Issuing Agency</label><input class="input" id="ng-agency" placeholder="e.g. IDOT"/></div>
+    </div>
+    <div class="row" style="margin-bottom:0">
+      <div class="field"><label class="label">Total Amount Issued ($)</label><input class="input" id="ng-amount" type="number" step="0.01" placeholder="15000.00"/></div>
+      <div class="field"><label class="label">Start Date</label><input class="input" id="ng-start" type="date"/></div>
+      <div class="field"><label class="label">End Date</label><input class="input" id="ng-end" type="date"/></div>
+    </div>
+    <div class="field">
+      <label class="label">Assign Officers</label>
+      <p style="font-size:11px;color:var(--m);margin-bottom:8px">Only submissions from selected officers within the date range count toward expenditures.</p>
+      <div style="display:flex;flex-wrap:wrap;gap:8px" id="ng-chips">
+        ${officers.map(o=>`<div class="chip" onclick="this.classList.toggle('selected')" data-uid="${o.user_id}">${o.name} #${o.badge}</div>`).join('')}
+      </div>
+    </div>
+    <div id="ng-err"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:6px">
+      <button class="btn outline small" onclick="App.setGrantTab('overview')">Cancel</button>
+      <button class="btn accent small" id="ng-save" onclick="App.createGrant()">Create Grant</button>
+    </div>
+  </div>`;
+};
+
+App.createGrant = async function(){
+  const g=id=>document.getElementById(id).value.trim();
+  const name=g('ng-name');
+  if(!name){ document.getElementById('ng-err').innerHTML='<div class="err shake">Grant name is required.</div>'; return; }
+  const chips=[...document.querySelectorAll('#ng-chips .chip.selected')];
+  const officer_ids=chips.map(c=>parseInt(c.dataset.uid));
+  const body={name, agency:g('ng-agency'), amount:g('ng-amount'),
+    start_date:g('ng-start'), end_date:g('ng-end'), officer_ids};
+  const btn=document.getElementById('ng-save'); btn.disabled=true; btn.textContent='Creating…';
+  const {ok,data}=await App.api('/api/grants','POST',body);
+  if(!ok){ document.getElementById('ng-err').innerHTML=`<div class="err shake">${data.error||'Failed.'}</div>`; btn.disabled=false; btn.textContent='Create Grant'; return; }
+  App.grantTab='overview'; App.go('grants');
 };
 
 App.page_supervisor = function(v){
