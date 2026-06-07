@@ -126,6 +126,48 @@ class OfficerWage(Base):
 Base.metadata.create_all(engine)
 
 
+# ── startup migrations ────────────────────────────────────────────────────────
+def _run_migrations():
+    """Add any missing columns to existing tables."""
+    import traceback
+    migrations = [
+        "ALTER TABLE submissions ADD COLUMN IF NOT EXISTS hours_worked VARCHAR(20)",
+        "ALTER TABLE submissions ADD COLUMN IF NOT EXISTS assist_officer INTEGER DEFAULT 0",
+        "ALTER TABLE submissions ADD COLUMN IF NOT EXISTS calls_for_service INTEGER DEFAULT 0",
+        "ALTER TABLE submissions ADD COLUMN IF NOT EXISTS field_interview INTEGER DEFAULT 0",
+    ]
+    # SQLite uses different syntax
+    if DB_URL.startswith('sqlite'):
+        # SQLite doesn't support IF NOT EXISTS on ALTER TABLE
+        # check columns first
+        with engine.connect() as conn:
+            from sqlalchemy import text, inspect
+            insp = inspect(engine)
+            existing = {c['name'] for c in insp.get_columns('submissions')}
+            for col, typ in [('hours_worked','VARCHAR(20)'),('assist_officer','INTEGER'),
+                              ('calls_for_service','INTEGER'),('field_interview','INTEGER')]:
+                if col not in existing:
+                    try:
+                        conn.execute(text(f"ALTER TABLE submissions ADD COLUMN {col} {typ}"))
+                        conn.commit()
+                    except Exception:
+                        pass
+        return
+    with engine.connect() as conn:
+        from sqlalchemy import text
+        for sql in migrations:
+            try:
+                conn.execute(text(sql))
+                conn.commit()
+            except Exception:
+                pass
+
+try:
+    _run_migrations()
+except Exception:
+    pass
+
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 def get_setting(s, key, default=''):
@@ -247,6 +289,7 @@ def me():
 @app.route('/api/submit', methods=['POST'])
 @login_required
 def submit():
+    import traceback
     d = request.json or {}
     s = db()
     try:
@@ -261,6 +304,8 @@ def submit():
             data_json=json.dumps(cats), source='form')
         s.add(sub); s.commit()
         return jsonify({'ok': True, 'submission_id': sub.id})
+    except Exception as e:
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
     finally:
         s.close()
 
@@ -842,6 +887,7 @@ def delete_grant(gid):
 @app.route('/api/grants/<int:gid>/stats')
 @role_required('supervisor', 'admin')
 def grant_stats(gid):
+    import traceback
     s = db()
     try:
         g = s.query(Grant).get(gid)
@@ -950,6 +996,8 @@ def grant_stats(gid):
                 'total_contacts': total_contacts,
             }
         })
+    except Exception as e:
+        return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
     finally:
         s.close()
 

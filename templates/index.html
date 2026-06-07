@@ -532,6 +532,7 @@ App.page_form = function(v){
           <div style="font-size:13px;color:var(--m)">Total: <strong id="f-total" style="color:var(--m);font-size:18px">0</strong></div>
           <button class="btn accent" id="form-submit-btn" onclick="App.submitForm()">Submit Report →</button>
         </div>
+        <div id="submit-err"></div>
       </div>
       <div class="lb" id="lb"><div class="muted" style="font-size:11px">Loading leaders…</div></div>
     </div>`;
@@ -800,8 +801,8 @@ App.submitForm = async function(){
   const {ok, data} = await App.api('/api/submit','POST',payload);
   if(!ok){
     btn.disabled=false; btn.textContent='Submit Report';
-    const errEl = document.getElementById('dup-warn');
-    if(errEl){ errEl.style.display='block'; errEl.innerHTML=`<div class="err shake">❌ ${data.error||'Submission failed. Try again.'}</div>`; }
+    const errEl = document.getElementById('submit-err');
+    if(errEl) errEl.innerHTML=`<div class="err shake">❌ ${data.error||'Submission failed. Try again.'}</div>`;
     return;
   }
 
@@ -926,7 +927,7 @@ App.loadGrantsOverview = async function(){
 App.loadGrantSummaryCard = async function(gid){
   const el=document.getElementById('grant-summary-'+gid); if(!el) return;
   const {ok,data}=await App.api(`/api/grants/${gid}/stats`);
-  if(!ok){ el.innerHTML=''; return; }
+  if(!ok){ el.innerHTML=`<div style="font-size:11px;color:var(--r)">Error: ${data.error||'failed'}</div>`; return; }
   const s=data.summary;
   const amt=parseFloat(s.grant_amount)||0;
   const spent=parseFloat(s.total_cost)||0;
@@ -953,7 +954,7 @@ App.openGrant = async function(gid){
   const el=document.getElementById('grants-content');
   el.innerHTML='<div class="muted" style="font-size:12px">Loading grant detail…</div>';
   const {ok,data}=await App.api(`/api/grants/${gid}/stats`);
-  if(!ok){ el.innerHTML='<div class="err">Failed to load grant.</div>'; return; }
+  if(!ok){ el.innerHTML=`<div class="err">Failed to load grant: ${data.error||'unknown error'}<br><small style="color:var(--m);word-break:break-all">${data.trace||''}</small></div>`; return; }
   const g=data.grant, s=data.summary, officers=data.officers;
   const today=new Date().toISOString().slice(0,10);
   const active=(!g.end_date||g.end_date>=today);
