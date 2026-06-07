@@ -922,7 +922,8 @@ def grant_stats(gid):
             if not u: continue
             per_officer[uid] = {
                 'name': u.name, 'badge': u.badge, 'wage': wages_map.get(uid, 0),
-                'reg_hours': 0.0, 'ot_hours': 0.0, 'reports': 0, 'citations': 0,
+                'reg_hours': 0.0, 'ot_hours': 0.0, 'miles': 0.0,
+                'reports': 0, 'citations': 0,
                 'cats': {k: 0 for k in CAT_KEYS}
             }
 
@@ -937,6 +938,7 @@ def grant_stats(gid):
             ot  = float(sub.ot_hours or 0)
             po['reg_hours'] += reg
             po['ot_hours']  += ot
+            po['miles']     += float(sub.mileage or 0)
             try: cats = json.loads(sub.data_json)
             except Exception: cats = {}
             for k in CAT_KEYS:
@@ -951,7 +953,8 @@ def grant_stats(gid):
             reg_pay       = wage * po['reg_hours']
             ot_pay        = wage * 1.5 * po['ot_hours']
             benefits      = wage * 0.05 * total_hours
-            officer_total = reg_pay + ot_pay + benefits
+            mileage_cost  = round(po['miles'] * 0.58, 2)
+            officer_total = reg_pay + ot_pay + benefits + mileage_cost
             total_cost   += officer_total
             cph = round(po['citations'] / total_hours, 2) if total_hours > 0 else 0
             officers_out.append({
@@ -959,6 +962,8 @@ def grant_stats(gid):
                 'wage': wage, 'reg_hours': round(po['reg_hours'], 2),
                 'ot_hours': round(po['ot_hours'], 2),
                 'total_hours': round(total_hours, 2),
+                'miles': round(po['miles'], 1),
+                'mileage_cost': mileage_cost,
                 'reports': po['reports'], 'citations': po['citations'],
                 'citations_per_hour': cph,
                 'reg_pay': round(reg_pay, 2), 'ot_pay': round(ot_pay, 2),
@@ -975,6 +980,8 @@ def grant_stats(gid):
         total_hours_s  = sum(o['total_hours']  for o in officers_out)
         total_reports  = sum(o['reports']      for o in officers_out)
         total_citations= sum(o['citations']    for o in officers_out)
+        total_miles    = round(sum(o['miles']  for o in officers_out), 1)
+        total_mileage_cost = round(total_miles * 0.58, 2)
         total_cph      = round(total_citations / total_hours_s, 2) if total_hours_s > 0 else 0
         total_contacts = sum(o['cats'].get('total_contacts', 0) for o in officers_out)
 
@@ -994,6 +1001,8 @@ def grant_stats(gid):
                 'total_citations': total_citations,
                 'citations_per_hour': total_cph,
                 'total_contacts': total_contacts,
+                'total_miles': total_miles,
+                'mileage_cost': total_mileage_cost,
             }
         })
     except Exception as e:
@@ -1050,7 +1059,7 @@ def grant_pdf(gid):
         u = users_map.get(uid)
         if not u: continue
         per_officer[uid] = {'name': u.name, 'badge': u.badge, 'wage': wages_map.get(uid, 0),
-                             'reg_hours': 0.0, 'ot_hours': 0.0, 'reports': 0,
+                             'reg_hours': 0.0, 'ot_hours': 0.0, 'miles': 0.0, 'reports': 0,
                              'citations': 0, 'cats': {k: 0 for k in CAT_KEYS}}
     for sub in subs_all:
         if not in_range(sub): continue
@@ -1061,6 +1070,7 @@ def grant_pdf(gid):
         hw = getattr(sub, "hours_worked", None)
         po["reg_hours"] += float(hw or 0) if (hw and str(hw).strip()) else _parse_hours(sub.start_time, sub.end_time)
         po['ot_hours']  += float(sub.ot_hours or 0)
+        po['miles']     += float(sub.mileage or 0)
         try: cats = json.loads(sub.data_json)
         except Exception: cats = {}
         for k in CAT_KEYS: po['cats'][k] += int(cats.get(k, 0) or 0)
@@ -1073,26 +1083,31 @@ def grant_pdf(gid):
         th   = po['reg_hours'] + po['ot_hours']
         rp   = wage * po['reg_hours']
         op   = wage * 1.5 * po['ot_hours']
-        bp   = wage * 0.05 * th
+        mc   = round(po['miles'] * 0.58, 2)
+        tot  = rp + op + bp + mc
         tot  = rp + op + bp
         total_cost += tot
         cph = round(po['citations'] / th, 2) if th > 0 else 0
         officers_out.append({'name': po['name'], 'badge': po['badge'], 'wage': wage,
                               'reg_hours': round(po['reg_hours'], 2), 'ot_hours': round(po['ot_hours'], 2),
-                              'total_hours': round(th, 2), 'reports': po['reports'],
+                              'total_hours': round(th, 2), 'miles': round(po['miles'], 1),
+                              'mileage_cost': round(mc, 2),
+                              'reports': po['reports'],
                               'citations': po['citations'], 'citations_per_hour': cph,
                               'reg_pay': round(rp, 2), 'ot_pay': round(op, 2),
                               'benefits': round(bp, 2), 'total': round(tot, 2), 'cats': po['cats']})
 
-    grant_amount = float(g_obj.amount or 0)
-    remaining    = grant_amount - total_cost
-    pct_used     = round(total_cost / grant_amount * 100, 1) if grant_amount > 0 else 0
-    total_hours  = sum(o['total_hours']  for o in officers_out)
-    total_reports= sum(o['reports']      for o in officers_out)
-    total_cit    = sum(o['citations']    for o in officers_out)
-    total_cph    = round(total_cit / total_hours, 2) if total_hours > 0 else 0
+    grant_amount  = float(g_obj.amount or 0)
+    remaining     = grant_amount - total_cost
+    pct_used      = round(total_cost / grant_amount * 100, 1) if grant_amount > 0 else 0
+    total_hours   = sum(o['total_hours']  for o in officers_out)
+    total_reports = sum(o['reports']      for o in officers_out)
+    total_cit     = sum(o['citations']    for o in officers_out)
+    total_miles   = round(sum(o['miles']  for o in officers_out), 1)
+    total_mc      = round(total_miles * 0.58, 2)
+    total_cph     = round(total_cit / total_hours, 2) if total_hours > 0 else 0
     total_contacts = sum(o['cats'].get('total_contacts', 0) for o in officers_out)
-    total_dui    = sum(sum(o['cats'].get(k, 0) for k in ['dui_alcohol','dui_drugs','dui_drugs_alcohol'])
+    total_dui     = sum(sum(o['cats'].get(k, 0) for k in ['dui_alcohol','dui_drugs','dui_drugs_alcohol'])
                        for o in officers_out)
 
     sort_by = request.args.get('sort', 'name')
@@ -1170,6 +1185,11 @@ def grant_pdf(gid):
         fin_rows.append([p8(f'Benefits — {o["name"]}'), p8g(f'{fmth(o["total_hours"])} × ${o["wage"]:.2f} × 0.05'),
                          p8(fmth(o["total_hours"])), p8(f'${o["wage"]*0.05:.4f}'), p8(fmt(o["benefits"]))])
     fin_rows.append(['','','',p8b('Subtotal'),p8b(fmt(sum(o["benefits"] for o in officers_out)))])
+    fin_rows.append(sh('Mileage Reimbursement ($0.58/mile)'))
+    for o in officers_out:
+        fin_rows.append([p8(f'Mileage — {o["name"]}'), p8g(f'{o["miles"]} mi × $0.58'),
+                         p8(''), p8('$0.58'), p8(fmt(o["mileage_cost"]))])
+    fin_rows.append(['','','',p8b('Subtotal'),p8b(fmt(sum(o["mileage_cost"] for o in officers_out)))])
     fin_rows.append([pw('TOTAL GRANT EXPENDITURE'),'','','',
                      Paragraph(f'<font size=10 color="#fbbf24"><b>{fmt(total_cost)}</b></font>', styles['Normal'])])
 
@@ -1179,10 +1199,12 @@ def grant_pdf(gid):
           ('LEFTPADDING',(0,0),(-1,-1),6),('BACKGROUND',(0,nr-1),(-1,nr-1),navy),
           ('SPAN',(0,nr-1),(3,nr-1)),('ALIGN',(2,0),(4,-1),'RIGHT')]
     n_off = len(officers_out)
-    for ri in [1, n_off+3, n_off*2+5]:
+    # Section header rows: reg=1, ot=n+3, benefits=n*2+5, mileage=n*3+7
+    for ri in [1, n_off+3, n_off*2+5, n_off*3+7]:
         if ri < nr:
             fs += [('BACKGROUND',(0,ri),(-1,ri),lgray),('SPAN',(0,ri),(-1,ri))]
-    for ri in [n_off+2, n_off*2+4, n_off*3+6]:
+    # Subtotal rows
+    for ri in [n_off+2, n_off*2+4, n_off*3+6, n_off*4+8]:
         if ri < nr-1:
             fs.append(('BACKGROUND',(0,ri),(-1,ri),rl_colors.HexColor('#e5e7eb')))
     ft = Table(fin_rows, colWidths=[2.0*inch,2.1*inch,0.7*inch,1.0*inch,1.3*inch])
@@ -1203,10 +1225,11 @@ def grant_pdf(gid):
         sr = [[Paragraph(f'<para align=center><font size=12><b>{fmth(o["reg_hours"])}</b></font><br/><font size=7 color="#9ca3af">REG HRS</font></para>', styles['Normal']),
                Paragraph(f'<para align=center><font size=12><b>{fmth(o["ot_hours"])}</b></font><br/><font size=7 color="#9ca3af">OT HRS</font></para>', styles['Normal']),
                Paragraph(f'<para align=center><font size=12><b>{fmth(o["total_hours"])}</b></font><br/><font size=7 color="#9ca3af">TOTAL HRS</font></para>', styles['Normal']),
+               Paragraph(f'<para align=center><font size=12><b>{o["miles"]}</b></font><br/><font size=7 color="#9ca3af">MILES</font></para>', styles['Normal']),
                Paragraph(f'<para align=center><font size=12><b>{o["reports"]}</b></font><br/><font size=7 color="#9ca3af">REPORTS</font></para>', styles['Normal']),
                Paragraph(f'<para align=center><font size=12><b>{o["citations"]}</b></font><br/><font size=7 color="#9ca3af">CITATIONS</font></para>', styles['Normal']),
                Paragraph(f'<para align=center><font size=12><b>{o["citations_per_hour"]}</b></font><br/><font size=7 color="#9ca3af">CIT/HR</font></para>', styles['Normal'])]]
-        srt = Table(sr, colWidths=[1.2*inch]*6)
+        srt = Table(sr, colWidths=[1.03*inch]*7)
         srt.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,-1),lgray),('INNERGRID',(0,0),(-1,-1),.4,rl_colors.HexColor('#e5e7eb')),
                                   ('BOX',(0,0),(-1,-1),.4,rl_colors.HexColor('#d1d5db')),('ALIGN',(0,0),(-1,-1),'CENTER'),
                                   ('VALIGN',(0,0),(-1,-1),'MIDDLE'),('TOPPADDING',(0,0),(-1,-1),5),('BOTTOMPADDING',(0,0),(-1,-1),5)]))
@@ -1214,11 +1237,12 @@ def grant_pdf(gid):
         dd = [[p8g('Regular Pay'),p8g(f'{fmth(o["reg_hours"])} × ${o["wage"]:.2f}'),p8(fmt(o["reg_pay"]))],
               [p8g('Overtime Pay'),p8g(f'{fmth(o["ot_hours"])} × ${o["wage"]:.2f} × 1.5'),p8(fmt(o["ot_pay"]))],
               [p8g('Benefits'),p8g(f'{fmth(o["total_hours"])} × ${o["wage"]:.2f} × 0.05'),p8(fmt(o["benefits"]))],
+              [p8g('Mileage'),p8g(f'{o["miles"]} mi × $0.58'),p8(fmt(o["mileage_cost"]))],
               [p8b('Officer Total'),'',p8b(fmt(o["total"]))]]
         ddt = Table(dd, colWidths=[1.5*inch,4.2*inch,1.5*inch])
         ddt.setStyle(TableStyle([('BOX',(0,0),(-1,-1),.4,rl_colors.HexColor('#d1d5db')),
                                   ('LINEBELOW',(0,0),(-1,-2),.4,rl_colors.HexColor('#e5e7eb')),
-                                  ('BACKGROUND',(0,3),(-1,3),lgray),('ALIGN',(2,0),(2,-1),'RIGHT'),
+                                  ('BACKGROUND',(0,4),(-1,4),lgray),('ALIGN',(2,0),(2,-1),'RIGHT'),
                                   ('VALIGN',(0,0),(-1,-1),'MIDDLE'),('TOPPADDING',(0,0),(-1,-1),4),
                                   ('BOTTOMPADDING',(0,0),(-1,-1),4),('LEFTPADDING',(0,0),(-1,-1),8),
                                   ('RIGHTPADDING',(2,0),(2,-1),8)]))
@@ -1227,18 +1251,18 @@ def grant_pdf(gid):
     # Activity table
     story.append(Paragraph('<b><font size=10 color="#1e3a5f">TASK FORCE ACTIVITY SUMMARY</font></b>', styles['Normal']))
     story.append(HRFlowable(width='100%', thickness=1.5, color=navy, spaceBefore=3, spaceAfter=6))
-    act_hdr = [pw(h) for h in ['Officer','Shifts','Contacts','Citations','DUI','Felony','Hours','Cit/Hr']]
+    act_hdr = [pw(h) for h in ['Officer','Shifts','Contacts','Citations','DUI','Felony','Hours','Miles','Fuel','Cit/Hr']]
     act_rows = [act_hdr]
     for i, o in enumerate(officers_out):
         dui = sum(o['cats'].get(k,0) for k in ['dui_alcohol','dui_drugs','dui_drugs_alcohol'])
         row = [p8(f'{o["name"]}, #{o["badge"]}'),p8(str(o["reports"])),p8(str(o["cats"].get("total_contacts",0))),
                p8(str(o["citations"])),p8(str(dui)),p8(str(o["cats"].get("felony_arrests",0))),
-               p8(fmth(o["total_hours"])),p8(str(o["citations_per_hour"]))]
+               p8(fmth(o["total_hours"])),p8(str(o["miles"])),p8(fmt(o["mileage_cost"])),p8(str(o["citations_per_hour"]))]
         act_rows.append(row)
     act_rows.append([pw('TOTALS'),pw(str(total_reports)),pw(str(total_contacts)),pw(str(total_cit)),
                      pw(str(total_dui)),pw(str(sum(o["cats"].get("felony_arrests",0) for o in officers_out))),
-                     pw(fmth(total_hours)),pw(str(total_cph))])
-    atbl = Table(act_rows, colWidths=[1.6*inch,.5*inch,.7*inch,.7*inch,.5*inch,.55*inch,.65*inch,.5*inch])
+                     pw(fmth(total_hours)),pw(str(total_miles)),pw(fmt(total_mc)),pw(str(total_cph))])
+    atbl = Table(act_rows, colWidths=[1.3*inch,.45*inch,.6*inch,.6*inch,.4*inch,.5*inch,.55*inch,.45*inch,.65*inch,.45*inch])
     ast = [('BACKGROUND',(0,0),(-1,0),dgray),('BACKGROUND',(0,len(act_rows)-1),(-1,len(act_rows)-1),navy),
            ('GRID',(0,0),(-1,-1),.4,rl_colors.HexColor('#d1d5db')),('ALIGN',(1,0),(-1,-1),'CENTER'),
            ('VALIGN',(0,0),(-1,-1),'MIDDLE'),('TOPPADDING',(0,0),(-1,-1),5),('BOTTOMPADDING',(0,0),(-1,-1),5),
