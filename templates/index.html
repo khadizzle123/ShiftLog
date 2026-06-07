@@ -530,7 +530,7 @@ App.page_form = function(v){
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center">
           <div style="font-size:13px;color:var(--m)">Total: <strong id="f-total" style="color:var(--m);font-size:18px">0</strong></div>
-          <button class="btn accent" onclick="App.submitForm()">Review & Submit →</button>
+          <button class="btn accent" id="form-submit-btn" onclick="App.submitForm()">Submit Report →</button>
         </div>
       </div>
       <div class="lb" id="lb"><div class="muted" style="font-size:11px">Loading leaders…</div></div>
@@ -786,41 +786,69 @@ App.submitForm = async function(){
     ot_hours:g('f-ot'), mileage:g('f-miles'), details:g('f-details'),
     ...this.form
   };
+
+  // Basic validation
+  if(!payload.date){
+    const errEl = document.getElementById('dup-warn');
+    if(errEl){ errEl.style.display='block'; errEl.innerHTML='<div class="err shake">⚠️ Please enter a shift date before submitting.</div>'; }
+    return;
+  }
+
+  const btn = document.getElementById('form-submit-btn');
+  btn.disabled=true; btn.innerHTML='Submitting<span class="dots"><span></span><span></span><span></span></span>';
+
+  const {ok, data} = await App.api('/api/submit','POST',payload);
+  if(!ok){
+    btn.disabled=false; btn.textContent='Submit Report';
+    const errEl = document.getElementById('dup-warn');
+    if(errEl){ errEl.style.display='block'; errEl.innerHTML=`<div class="err shake">❌ ${data.error||'Submission failed. Try again.'}</div>`; }
+    return;
+  }
+
   this.lastPayload = payload;
-  // save to DB
-  await App.api('/api/submit','POST',payload);
+  this.lastSubmissionId = data.submission_id;
   this.go('summary');
 };
 
 App.page_summary = function(v){
   const p = this.lastPayload || {};
-  let contacts = p.total_contacts||0;
-  let citations = ['seat_belt','speeding','texting','suspended_licenses','child_safety_seat','reckless_driving','inattentive_driving','uninsured_motorists'].reduce((a,k)=>a+(p[k]||0),0);
-  let arrests = ['dui_alcohol','dui_drugs','dui_drugs_alcohol','felony_arrests'].reduce((a,k)=>a+(p[k]||0),0);
+  let contacts  = p.total_contacts||0;
+  let citations = ['seat_belt','speeding','texting','suspended_licenses','child_safety_seat',
+    'reckless_driving','inattentive_driving','uninsured_motorists'].reduce((a,k)=>a+(p[k]||0),0);
+  let arrests   = ['dui_alcohol','dui_drugs','dui_drugs_alcohol','felony_arrests'].reduce((a,k)=>a+(p[k]||0),0);
+  let otherContacts = ['assist_officer','calls_for_service','field_interview'].reduce((a,k)=>a+(p[k]||0),0);
   v.innerHTML = `
     <div class="center" style="max-width:520px;margin:0 auto;padding-top:20px">
       <div class="check"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="3" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg></div>
-      <h2 class="h1">Report Ready</h2>
+      <h2 class="h1">Report Submitted!</h2>
+      <p class="sub">Your shift has been saved. Download your PDF below.</p>
       <div class="card" style="margin:16px 0;text-align:left">
-        <div style="display:flex;gap:20px;margin-bottom:18px">
+        <div style="display:flex;gap:20px;margin-bottom:18px;flex-wrap:wrap">
           <div><div class="label">Officer</div><div style="font-size:15px;font-weight:700">${this.user.name}</div></div>
           <div><div class="label">Badge</div><div style="font-size:15px;font-weight:700">#${this.user.badge}</div></div>
+          <div><div class="label">Date</div><div style="font-size:15px;font-weight:700">${p.date||'—'}</div></div>
+          ${p.hours_worked?`<div><div class="label">Reg Hrs</div><div style="font-size:15px;font-weight:700">${p.hours_worked}</div></div>`:''}
+          ${p.ot_hours?`<div><div class="label">OT Hrs</div><div style="font-size:15px;font-weight:700">${p.ot_hours}</div></div>`:''}
         </div>
         <div class="tiles">
-          <div class="tile glow"><div class="tv" style="color:var(--a)" id="t-c">0</div><div class="tl">Total Actions</div></div>
+          <div class="tile glow"><div class="tv" style="color:var(--a)" id="t-c">0</div><div class="tl">Contacts</div></div>
           <div class="tile"><div class="tv" style="color:#8b5cf6" id="t-ci">0</div><div class="tl">Citations</div></div>
           <div class="tile"><div class="tv" style="color:var(--r)" id="t-a">0</div><div class="tl">Arrests</div></div>
+          ${otherContacts?`<div class="tile"><div class="tv" style="color:var(--am)" id="t-oc">0</div><div class="tl">Other</div></div>`:''}
         </div>
       </div>
-      <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
-        <button class="btn accent" id="dl-btn" onclick="App.downloadPDF()">⬇ Download PDF</button>
-        <button class="btn outline" onclick="App.go('form')">← Back to Form</button>
+      <div class="card" style="margin-bottom:16px;text-align:left;background:rgba(59,130,246,.05);border-color:rgba(59,130,246,.2)">
+        <div style="font-size:12px;font-weight:700;color:var(--a);margin-bottom:8px">📄 Download Your HVE Report PDF</div>
+        <div style="font-size:12px;color:var(--m);margin-bottom:12px">Your submission has been saved. Download the filled PDF to keep for your records or hand in.</div>
+        <button class="btn accent full" id="dl-btn" onclick="App.downloadPDF()">⬇ Download PDF Report</button>
+        <div id="dl-msg"></div>
       </div>
-      <div id="dl-msg"></div>
+      <button class="btn outline full" onclick="App.go('form')">← Start New Report</button>
     </div>`;
-  this.countUp(document.getElementById('t-c'), contacts+citations+arrests);
+  this.countUp(document.getElementById('t-c'), contacts);
   this.countUp(document.getElementById('t-ci'), citations);
   this.countUp(document.getElementById('t-a'), arrests);
+  if(otherContacts) setTimeout(()=>this.countUp(document.getElementById('t-oc'), otherContacts),0);
 };
 
 App.downloadPDF = async function(){

@@ -847,23 +847,25 @@ def grant_stats(gid):
         g = s.query(Grant).get(gid)
         if not g: return jsonify({'error': 'not found'}), 404
         officer_ids = [go.user_id for go in s.query(GrantOfficer).filter_by(grant_id=gid).all()]
-        wages_map = {w.user_id: float(w.wage or 0) for w in
-                     s.query(OfficerWage).filter(OfficerWage.user_id.in_(officer_ids)).all()}
-        users_map = {u.id: u for u in s.query(User).filter(User.id.in_(officer_ids)).all()}
 
-        # Fetch submissions in grant date range for assigned officers
-        subs = s.query(Submission).filter(Submission.user_id.in_(officer_ids)).all()
-        # filter by shift_date within grant range
+        wages_map = {}
+        users_map = {}
+        subs = []
+        if officer_ids:
+            wages_map = {w.user_id: float(w.wage or 0) for w in
+                         s.query(OfficerWage).filter(OfficerWage.user_id.in_(officer_ids)).all()}
+            users_map = {u.id: u for u in s.query(User).filter(User.id.in_(officer_ids)).all()}
+            subs = s.query(Submission).filter(Submission.user_id.in_(officer_ids)).all()
+
         def in_range(sub):
             sd = sub.shift_date or ''
             if not sd: return False
-            try:
-                dt = datetime.strptime(sd, '%Y-%m-%d')
+            try:    dt = datetime.strptime(sd, '%Y-%m-%d')
             except Exception:
                 try: dt = datetime.strptime(sd, '%m/%d/%Y')
                 except Exception: return False
             s_dt = datetime.strptime(g.start_date, '%Y-%m-%d') if g.start_date else None
-            e_dt = datetime.strptime(g.end_date, '%Y-%m-%d').replace(hour=23,minute=59) if g.end_date else None
+            e_dt = datetime.strptime(g.end_date, '%Y-%m-%d').replace(hour=23, minute=59) if g.end_date else None
             if s_dt and dt < s_dt: return False
             if e_dt and dt > e_dt: return False
             return True
@@ -884,7 +886,8 @@ def grant_stats(gid):
             if uid not in per_officer: continue
             po = per_officer[uid]
             po['reports'] += 1
-            reg = float(sub.hours_worked or 0) if (sub.hours_worked and sub.hours_worked.strip()) else _parse_hours(sub.start_time, sub.end_time)
+            hw = getattr(sub, 'hours_worked', None)
+            reg = float(hw or 0) if (hw and str(hw).strip()) else _parse_hours(sub.start_time, sub.end_time)
             ot  = float(sub.ot_hours or 0)
             po['reg_hours'] += reg
             po['ot_hours']  += ot
@@ -894,45 +897,39 @@ def grant_stats(gid):
                 po['cats'][k] += int(cats.get(k, 0) or 0)
             po['citations'] += sum(int(cats.get(k, 0) or 0) for k in CITATION_KEYS)
 
-        # Build summary
         total_cost = 0.0
         officers_out = []
         for uid, po in per_officer.items():
             wage = po['wage']
-            total_hours = po['reg_hours'] + po['ot_hours']
-            reg_pay     = wage * po['reg_hours']
-            ot_pay      = wage * 1.5 * po['ot_hours']
-            benefits    = wage * 0.05 * total_hours
+            total_hours   = po['reg_hours'] + po['ot_hours']
+            reg_pay       = wage * po['reg_hours']
+            ot_pay        = wage * 1.5 * po['ot_hours']
+            benefits      = wage * 0.05 * total_hours
             officer_total = reg_pay + ot_pay + benefits
-            total_cost += officer_total
+            total_cost   += officer_total
             cph = round(po['citations'] / total_hours, 2) if total_hours > 0 else 0
             officers_out.append({
                 'user_id': uid, 'name': po['name'], 'badge': po['badge'],
                 'wage': wage, 'reg_hours': round(po['reg_hours'], 2),
                 'ot_hours': round(po['ot_hours'], 2),
                 'total_hours': round(total_hours, 2),
-                'reports': po['reports'],
-                'citations': po['citations'],
+                'reports': po['reports'], 'citations': po['citations'],
                 'citations_per_hour': cph,
-                'reg_pay': round(reg_pay, 2),
-                'ot_pay': round(ot_pay, 2),
-                'benefits': round(benefits, 2),
-                'total': round(officer_total, 2),
+                'reg_pay': round(reg_pay, 2), 'ot_pay': round(ot_pay, 2),
+                'benefits': round(benefits, 2), 'total': round(officer_total, 2),
                 'cats': po['cats'],
             })
 
-        grant_amount = float(g.amount or 0)
-        remaining    = grant_amount - total_cost
-        pct_used     = round((total_cost / grant_amount * 100), 1) if grant_amount > 0 else 0
-
-        # totals across all officers
-        total_reg_pay  = sum(o['reg_pay']  for o in officers_out)
-        total_ot_pay   = sum(o['ot_pay']   for o in officers_out)
-        total_benefits = sum(o['benefits'] for o in officers_out)
-        total_hours    = sum(o['total_hours'] for o in officers_out)
-        total_reports  = sum(o['reports']  for o in officers_out)
-        total_citations= sum(o['citations'] for o in officers_out)
-        total_cph      = round(total_citations / total_hours, 2) if total_hours > 0 else 0
+        grant_amount   = float(g.amount or 0)
+        remaining      = grant_amount - total_cost
+        pct_used       = round(total_cost / grant_amount * 100, 1) if grant_amount > 0 else 0
+        total_reg_pay  = sum(o['reg_pay']      for o in officers_out)
+        total_ot_pay   = sum(o['ot_pay']       for o in officers_out)
+        total_benefits = sum(o['benefits']     for o in officers_out)
+        total_hours_s  = sum(o['total_hours']  for o in officers_out)
+        total_reports  = sum(o['reports']      for o in officers_out)
+        total_citations= sum(o['citations']    for o in officers_out)
+        total_cph      = round(total_citations / total_hours_s, 2) if total_hours_s > 0 else 0
         total_contacts = sum(o['cats'].get('total_contacts', 0) for o in officers_out)
 
         return jsonify({
@@ -946,7 +943,7 @@ def grant_stats(gid):
                 'reg_pay': round(total_reg_pay, 2),
                 'ot_pay': round(total_ot_pay, 2),
                 'benefits': round(total_benefits, 2),
-                'total_hours': round(total_hours, 2),
+                'total_hours': round(total_hours_s, 2),
                 'total_reports': total_reports,
                 'total_citations': total_citations,
                 'citations_per_hour': total_cph,
@@ -975,10 +972,14 @@ def grant_pdf(gid):
         if not g_obj:
             return jsonify({'error': 'not found'}), 404
         officer_ids = [go.user_id for go in s_db.query(GrantOfficer).filter_by(grant_id=gid).all()]
-        wages_map = {w.user_id: float(w.wage or 0) for w in
-                     s_db.query(OfficerWage).filter(OfficerWage.user_id.in_(officer_ids)).all()}
-        users_map = {u.id: u for u in s_db.query(User).filter(User.id.in_(officer_ids)).all()}
-        subs_all  = s_db.query(Submission).filter(Submission.user_id.in_(officer_ids)).all()
+        wages_map = {}
+        users_map = {}
+        subs_all  = []
+        if officer_ids:
+            wages_map = {w.user_id: float(w.wage or 0) for w in
+                         s_db.query(OfficerWage).filter(OfficerWage.user_id.in_(officer_ids)).all()}
+            users_map = {u.id: u for u in s_db.query(User).filter(User.id.in_(officer_ids)).all()}
+            subs_all  = s_db.query(Submission).filter(Submission.user_id.in_(officer_ids)).all()
         dept_name = get_setting(s_db, 'department_name', 'Blackfoot Police Department')
     finally:
         s_db.close()
@@ -1009,7 +1010,8 @@ def grant_pdf(gid):
         if uid not in per_officer: continue
         po = per_officer[uid]
         po['reports'] += 1
-        po["reg_hours"] += float(sub.hours_worked or 0) if (sub.hours_worked and sub.hours_worked.strip()) else _parse_hours(sub.start_time, sub.end_time)
+        hw = getattr(sub, "hours_worked", None)
+        po["reg_hours"] += float(hw or 0) if (hw and str(hw).strip()) else _parse_hours(sub.start_time, sub.end_time)
         po['ot_hours']  += float(sub.ot_hours or 0)
         try: cats = json.loads(sub.data_json)
         except Exception: cats = {}
